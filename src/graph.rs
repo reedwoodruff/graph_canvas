@@ -1,0 +1,301 @@
+use std::collections::HashMap;
+
+use crate::utils::generate_id;
+
+pub trait NodeTemplateInfo {
+    fn get_slot_template(&self, slot_id: &str) -> Option<&SlotTemplate>;
+}
+
+// Template definitions
+#[derive(Debug, Clone)]
+pub struct NodeTemplate {
+    pub template_id: String,
+    pub name: String,
+    pub slot_templates: Vec<SlotTemplate>,
+    // Visual defaults could go here
+    pub default_width: f64,
+    pub default_height: f64,
+}
+
+impl NodeTemplateInfo for NodeTemplate {
+    fn get_slot_template(&self, slot_id: &str) -> Option<&SlotTemplate> {
+        self.slot_templates.iter().find(|st| st.id == slot_id)
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct SlotTemplate {
+    pub id: String,
+    pub name: String,
+    pub position: SlotPosition,
+    pub slot_type: SlotType,
+    pub allowed_connections: Vec<String>, // template_ids that can connect here
+    pub min_connections: usize,
+    pub max_connections: usize,
+}
+
+// Instance definitions
+#[derive(Debug, Clone)]
+pub struct NodeInstance {
+    pub instance_id: String,
+    pub template_id: String,
+    pub x: f64,
+    pub y: f64,
+    pub width: f64,
+    pub height: f64,
+    pub slots: Vec<SlotInstance>,
+}
+
+impl NodeInstance {
+    pub fn new(template: &NodeTemplate, instance_id: String, x: f64, y: f64) -> Self {
+        let mut slots = template
+            .slot_templates
+            .iter()
+            .map(|st| SlotInstance {
+                id: st.id.clone(),
+                slot_template_id: st.id.clone(),
+                node_template_id: template.template_id.clone(),
+                connections: Vec::new(),
+            })
+            .collect::<Vec<_>>();
+
+        // Add the standard incoming slot
+        slots.push(SlotInstance {
+            id: "incoming".to_string(),
+            node_template_id: template.template_id.clone(),
+            slot_template_id: "incoming".to_string(),
+            connections: Vec::new(),
+        });
+
+        Self {
+            instance_id,
+            template_id: template.template_id.clone(),
+            x,
+            y,
+            width: template.default_width,
+            height: template.default_height,
+            slots,
+        }
+    }
+    pub fn capabilities<'a>(&'a self, graph: &'a Graph) -> NodeCapabilities<'a> {
+        let template = graph.node_templates.get(&self.template_id).unwrap();
+        NodeCapabilities {
+            template,
+            instance: self,
+        }
+    }
+}
+
+pub struct NodeCapabilities<'a> {
+    pub template: &'a NodeTemplate,
+    pub instance: &'a NodeInstance,
+}
+
+impl NodeTemplateInfo for NodeCapabilities<'_> {
+    fn get_slot_template(&self, slot_id: &str) -> Option<&SlotTemplate> {
+        self.template.get_slot_template(slot_id)
+    }
+}
+impl<'a> NodeCapabilities<'a> {
+    pub fn new(template: &'a NodeTemplate, instance: &'a NodeInstance) -> Self {
+        Self { template, instance }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct SlotInstance {
+    pub id: String,
+    pub slot_template_id: String,
+    pub node_template_id: String,
+    pub connections: Vec<Connection>,
+}
+impl SlotInstance {
+    pub fn capabilities<'a>(&'a self, graph: &'a Graph) -> SlotCapabilities<'a> {
+        let node_template = graph.node_templates.get(&self.node_template_id).unwrap();
+        let slot_template = node_template
+            .get_slot_template(&self.slot_template_id)
+            .unwrap();
+        SlotCapabilities {
+            template: slot_template,
+            instance: self,
+        }
+    }
+}
+pub struct SlotCapabilities<'a> {
+    pub template: &'a SlotTemplate,
+    pub instance: &'a SlotInstance,
+}
+
+#[derive(Debug, Clone)]
+pub struct Connection {
+    pub target_node_id: String,
+    pub target_slot_id: String,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum SlotPosition {
+    Left,
+    Right,
+    Top,
+    Bottom,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum SlotType {
+    Input,
+    Output,
+}
+
+pub struct Graph {
+    pub(crate) node_templates: HashMap<String, NodeTemplate>,
+    pub(crate) node_instances: HashMap<String, NodeInstance>,
+    pub(crate) selected_instance: Option<String>,
+    pub(crate) dragging: bool,
+    pub(crate) offset_x: f64,
+    pub(crate) offset_y: f64,
+}
+
+impl Graph {
+    pub fn new() -> Self {
+        Graph {
+            node_templates: HashMap::new(),
+            node_instances: HashMap::new(),
+            selected_instance: None,
+            dragging: false,
+            offset_x: 0.0,
+            offset_y: 0.0,
+        }
+    }
+
+    pub fn register_template(&mut self, template: NodeTemplate) {
+        let mut new_slots = template.slot_templates.clone();
+        new_slots.push(SlotTemplate {
+            id: "incoming".to_string(),
+            name: "Incoming".to_string(),
+            position: SlotPosition::Left,
+            slot_type: SlotType::Input,
+            allowed_connections: Vec::new(),
+            min_connections: 0,
+            max_connections: 10000,
+        });
+        let template_with_incoming_slot = NodeTemplate {
+            slot_templates: new_slots,
+            ..template
+        };
+        self.node_templates.insert(
+            template_with_incoming_slot.template_id.clone(),
+            template_with_incoming_slot,
+        );
+    }
+
+    pub fn create_instance(&mut self, node_template_id: &str, x: f64, y: f64) -> Option<String> {
+        let template = self.node_templates.get(node_template_id)?;
+
+        let instance_id = generate_id();
+        let instance = NodeInstance {
+            instance_id: instance_id.clone(),
+            template_id: node_template_id.to_string(),
+            x,
+            y,
+            width: template.default_width,
+            height: template.default_height,
+            slots: template
+                .slot_templates
+                .iter()
+                .map(|slot_template| SlotInstance {
+                    id: generate_id(),
+                    node_template_id: node_template_id.to_string(),
+                    slot_template_id: slot_template.id.clone(),
+                    connections: Vec::new(),
+                })
+                .collect(),
+        };
+
+        self.node_instances.insert(instance_id.clone(), instance);
+        Some(instance_id)
+    }
+
+    pub fn get_node_capabilities(&self, instance_id: &str) -> Option<NodeCapabilities> {
+        let instance = self.node_instances.get(instance_id)?;
+        let template = self.node_templates.get(&instance.template_id)?;
+        Some(NodeCapabilities { template, instance })
+    }
+    pub fn get_slot_capabilities(
+        &self,
+        node_instance_id: &str,
+        slot_id: &str,
+    ) -> Option<SlotCapabilities> {
+        let instance = self.node_instances.get(node_instance_id)?;
+        let slot = instance.slots.iter().find(|s| s.id == slot_id)?;
+        let template = self.node_templates.get(&slot.node_template_id)?;
+        let slot_template = template.get_slot_template(&slot.slot_template_id)?;
+        Some(SlotCapabilities {
+            template: slot_template,
+            instance: slot,
+        })
+    }
+
+    pub fn is_valid_connection(
+        &self,
+        from_node: &str,
+        from_slot: &str,
+        to_node: &str,
+        to_slot: &str,
+    ) -> bool {
+        // Check if connection is valid based on templates
+        // Implementation would check slot types, allowed connections, and current cardinality
+        todo!()
+    }
+
+    pub fn connect_slots(
+        &mut self,
+        from_node: &str,
+        from_slot: &str,
+        to_node: &str,
+        to_slot: &str,
+    ) -> Result<(), String> {
+        if !self.is_valid_connection(from_node, from_slot, to_node, to_slot) {
+            return Err("Invalid connection".to_string());
+        }
+
+        // Add connection to both slots
+        if let Some(from_instance) = self.node_instances.get_mut(from_node) {
+            if let Some(slot) = from_instance.slots.iter_mut().find(|s| s.id == from_slot) {
+                slot.connections.push(Connection {
+                    target_node_id: to_node.to_string(),
+                    target_slot_id: to_slot.to_string(),
+                });
+            }
+        }
+
+        if let Some(to_instance) = self.node_instances.get_mut(to_node) {
+            if let Some(slot) = to_instance.slots.iter_mut().find(|s| s.id == to_slot) {
+                slot.connections.push(Connection {
+                    target_node_id: from_node.to_string(),
+                    target_slot_id: from_slot.to_string(),
+                });
+            }
+        }
+
+        Ok(())
+    }
+
+    pub fn is_graph_valid(&self) -> bool {
+        // Check if all nodes satisfy their template constraints
+        for instance in self.node_instances.values() {
+            if let Some(template) = self.node_templates.get(&instance.template_id) {
+                for (slot, slot_template) in
+                    instance.slots.iter().zip(template.slot_templates.iter())
+                {
+                    if slot.connections.len() < slot_template.min_connections
+                        || slot.connections.len() > slot_template.max_connections
+                    {
+                        return false;
+                    }
+                    // Additional validation could go here
+                }
+            }
+        }
+        true
+    }
+}

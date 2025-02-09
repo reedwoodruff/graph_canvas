@@ -1,0 +1,54 @@
+<!-- index.html -->
+<!doctype html>
+<html lang="en">
+    <head>
+        <meta charset="UTF-8" />
+        <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+        <title>Graph Canvas Demo</title>
+        <style>
+            #graph-container {
+                width: 800px;
+                height: 600px;
+                border: 1px solid #ccc;
+                margin: 20px;
+            }
+            .controls {
+                margin: 20px;
+            }
+        </style>
+    </head>
+    <body>
+        <div class="controls">
+            <button id="add-node">Add Node</button>
+        </div>
+        <div id="graph-container"></div>
+
+        <script type="module">
+            import init, { GraphCanvas } from "../pkg/canvas_graph.js";
+
+            async function main() {
+                await init();
+
+                const container = document.getElementById("graph-container");
+                const graph = new GraphCanvas(container);
+
+                // Start the render loop
+                graph.setup_events();
+                graph.start_render_loop();
+
+                // Add a test node when clicking the button
+                document
+                    .getElementById("add-node")
+                    .addEventListener("click", () => {
+                        // Add node at random position within container
+                        const x = Math.random() * (container.clientWidth - 100);
+                        const y =
+                            Math.random() * (container.clientHeight - 100);
+                        graph.add_node("test_node", x, y);
+                    });
+            }
+
+            main().catch(console.error);
+        </script>
+    </body>
+</html>
