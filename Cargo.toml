@@ -1,5 +1,5 @@
 [package]
-name = "canvas_graph"
+name = "graph_canvas"
 version = "0.1.0"
 edition = "2021"
 
@@ -26,6 +26,7 @@ web-sys = { version = "*", features = [
 wasm-bindgen = "0.2"
 js-sys = "0.3"
 console_error_panic_hook = "*"
+anyhow = "*"
 
 [dependencies.uuid]
 version = "1.13.1"

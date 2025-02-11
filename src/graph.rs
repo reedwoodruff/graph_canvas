@@ -237,14 +237,31 @@ impl Graph {
 
     pub fn is_valid_connection(
         &self,
-        from_node: &str,
-        from_slot: &str,
-        to_node: &str,
-        to_slot: &str,
+        from_node_id: &str,
+        from_slot_id: &str,
+        target_node_id: &str,
+        target_slot_id: &str,
     ) -> bool {
         // Check if connection is valid based on templates
         // Implementation would check slot types, allowed connections, and current cardinality
-        todo!()
+        //
+        let from_slot_cap = self
+            .get_slot_capabilities(&from_node_id, &from_slot_id)
+            .unwrap();
+        let target_node_cap = self.get_node_capabilities(&target_node_id).unwrap();
+        if from_slot_cap
+            .template
+            .allowed_connections
+            .contains(&target_node_cap.template.template_id)
+            && from_slot_cap.instance.connections.len() < from_slot_cap.template.max_connections
+            && !from_slot_cap.instance.connections.iter().any(|connection| {
+                connection.target_node_id == target_node_id
+                    && connection.target_slot_id == target_slot_id
+            })
+        {
+            return true;
+        }
+        false
     }
 
     pub fn connect_slots(

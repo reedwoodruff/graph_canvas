@@ -1,4 +1,3 @@
-use graph::Connection;
 use graph::Graph;
 use graph::NodeInstance;
 use graph::NodeTemplate;
@@ -459,7 +458,10 @@ impl GraphCanvas {
             let rect = canvas_clone.get_bounding_client_rect();
             let x = event.client_x() as f64 - rect.left();
             let y = event.client_y() as f64 - rect.top();
-            self_clone.handle_mouse_up(x, y).unwrap();
+            match self_clone.handle_mouse_up(x, y) {
+                Ok(_) => {}
+                Err(e) => log(&format!("{:?}", e.as_string())),
+            }
         }) as Box<dyn FnMut(_)>);
 
         // Add event listeners
@@ -571,28 +573,12 @@ impl GraphCanvas {
                         if let (Some(from_node), Some(from_slot)) =
                             (drag_state.from_node.clone(), drag_state.from_slot.clone())
                         {
-                            let from_slot_cap =
-                                graph.get_slot_capabilities(&from_node, &from_slot).unwrap();
-                            let target_node_cap =
-                                graph.get_node_capabilities(&target_node_id).unwrap();
-                            if from_slot_cap
-                                .template
-                                .allowed_connections
-                                .contains(&target_node_cap.template.template_id)
-                                && from_slot_cap.instance.connections.len()
-                                    < from_slot_cap.template.max_connections
-                                && !from_slot_cap.instance.connections.iter().any(|connection| {
-                                    connection.target_node_id == target_node_id
-                                        && connection.target_slot_id == "incoming"
-                                })
-                            {
-                                self.create_connection(
-                                    &mut graph,
-                                    &from_node,
-                                    &from_slot,
-                                    &target_node_id,
-                                )?;
-                            }
+                            graph.connect_slots(
+                                &from_node,
+                                &from_slot,
+                                &target_node_id,
+                                &"incoming",
+                            )?;
                         }
                     }
                 }
@@ -606,25 +592,6 @@ impl GraphCanvas {
         Ok(())
     }
 
-    fn create_connection(
-        &self,
-        graph: &mut Graph,
-        from_node: &str,
-        from_slot: &str,
-        to_node: &str,
-    ) -> Result<(), JsValue> {
-        // Add connection to source node's slot
-        if let Some(source_node) = graph.node_instances.get_mut(from_node) {
-            if let Some(source_slot) = source_node.slots.iter_mut().find(|s| s.id == from_slot) {
-                source_slot.connections.push(Connection {
-                    target_node_id: to_node.to_string(),
-                    target_slot_id: "incoming".to_string(), // hardcoded incoming slot
-                });
-            }
-        }
-
-        Ok(())
-    }
     fn is_point_in_slot(
         &self,
         x: f64,
