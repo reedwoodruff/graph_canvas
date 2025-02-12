@@ -150,9 +150,65 @@ pub struct Graph {
     pub(crate) node_templates: HashMap<String, NodeTemplate>,
     pub(crate) node_instances: HashMap<String, NodeInstance>,
     pub(crate) selected_instance: Option<String>,
-    pub(crate) dragging: bool,
+    pub(crate) is_mouse_down: bool,
+    pub(crate) is_dragging_node: bool,
+    pub(crate) context_menu: Option<ContextMenu>,
     pub(crate) offset_x: f64,
     pub(crate) offset_y: f64,
+}
+
+pub struct ContextMenu {
+    pub x: f64,
+    pub y: f64,
+    pub target_type: ContextMenuTarget,
+}
+pub enum ContextMenuTarget {
+    Node(String),
+    // from_node
+    Connection {
+        from_node: String,
+        from_slot: String,
+        to_node: String,
+        to_slot: String,
+    },
+    Slot {
+        node_id: String,
+        slot_id: String,
+    },
+}
+impl ContextMenuTarget {
+    pub fn get_title(&self, graph: &Graph) -> String {
+        match self {
+            ContextMenuTarget::Node(node_id) => {
+                if let Some(node) = graph.node_instances.get(node_id) {
+                    if let Some(template) = graph.node_templates.get(&node.template_id) {
+                        format!("Node: {}", template.name)
+                    } else {
+                        "Unknown Node".to_string()
+                    }
+                } else {
+                    "Unknown Node".to_string()
+                }
+            }
+            ContextMenuTarget::Connection { .. } => "Connection".to_string(),
+            ContextMenuTarget::Slot { node_id, slot_id } => {
+                if let Some(node) = graph.node_instances.get(node_id) {
+                    if let Some(slot) = node.slots.iter().find(|s| s.id == *slot_id) {
+                        if let Some(template) = graph.node_templates.get(&node.template_id) {
+                            if let Some(slot_template) = template
+                                .slot_templates
+                                .iter()
+                                .find(|t| t.id == slot.slot_template_id)
+                            {
+                                return format!("Slot: {}", slot_template.name);
+                            }
+                        }
+                    }
+                }
+                "Unknown Slot".to_string()
+            }
+        }
+    }
 }
 
 impl Graph {
@@ -161,9 +217,11 @@ impl Graph {
             node_templates: HashMap::new(),
             node_instances: HashMap::new(),
             selected_instance: None,
-            dragging: false,
+            is_mouse_down: false,
+            is_dragging_node: false,
             offset_x: 0.0,
             offset_y: 0.0,
+            context_menu: None,
         }
     }
 
@@ -234,7 +292,6 @@ impl Graph {
             instance: slot,
         })
     }
-
     pub fn is_valid_connection(
         &self,
         from_node_id: &str,

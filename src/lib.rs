@@ -1,3 +1,5 @@
+use graph::ContextMenu;
+use graph::ContextMenuTarget;
 use graph::Graph;
 use graph::NodeInstance;
 use graph::NodeTemplate;
@@ -27,7 +29,7 @@ extern "C" {
 const SLOT_DRAW_RADIUS: f64 = 7.0;
 
 #[derive(Debug, Clone)]
-pub struct DragState {
+pub struct ConnectionDragState {
     active: bool,
     from_node: Option<String>,
     from_slot: Option<String>,
@@ -35,7 +37,7 @@ pub struct DragState {
     current_y: f64,
 }
 
-impl DragState {
+impl ConnectionDragState {
     pub fn new() -> Self {
         Self {
             active: false,
@@ -47,12 +49,82 @@ impl DragState {
     }
 }
 
+struct DragStateResetter<'a> {
+    drag_state: &'a mut ConnectionDragState,
+    graph: &'a mut Graph,
+}
+impl<'a> DragStateResetter<'a> {
+    // Create a new resetter
+    pub fn new(drag_state: &'a mut ConnectionDragState, graph: &'a mut Graph) -> Self {
+        DragStateResetter { drag_state, graph }
+    }
+
+    // Manually reset state (though Drop will do this automatically)
+    pub fn reset_now(&mut self) {
+        *self.drag_state = ConnectionDragState::new();
+        self.graph.is_dragging_node = false;
+    }
+}
+
+impl<'a> Drop for DragStateResetter<'a> {
+    fn drop(&mut self) {
+        self.reset_now();
+    }
+}
+
+pub struct InteractionState {
+    pub is_mouse_down: bool,
+    pub is_dragging_node: bool,
+    pub connection_drag: Option<ConnectionDragInfo>,
+    pub context_menu: Option<ContextMenu>,
+    pub selected_element: Option<SelectedElement>,
+}
+impl InteractionState {
+    fn new() -> Self {
+        Self {
+            selected_element: None,
+            is_mouse_down: false,
+            is_dragging_node: false,
+            context_menu: None,
+            connection_drag: None,
+        }
+    }
+}
+
+pub struct ConnectionDragInfo {
+    pub from_node: String,
+    pub from_slot: String,
+    pub current_x: f64,
+    pub current_y: f64,
+}
+
+pub enum SelectedElement {
+    Node(String),
+    Slot {
+        node_id: String,
+        slot_id: String,
+    },
+    Connection {
+        from_node: String,
+        from_slot: String,
+        to_node: String,
+        to_slot: String,
+    },
+}
+
 #[derive(Clone)]
 #[wasm_bindgen]
 pub struct GraphCanvas {
+    settings: Arc<GraphCanvasSettings>,
     graph: Arc<Mutex<Graph>>,
     canvas: HtmlCanvasElement,
-    drag_state: Arc<Mutex<DragState>>,
+    connection_drag_state: Arc<Mutex<ConnectionDragState>>,
+    // interaction_state: Arc<Mutex<InteractionState>>,
+}
+
+#[derive(Clone)]
+pub struct GraphCanvasSettings {
+    context_menu_size: (f64, f64),
 }
 
 #[wasm_bindgen]
@@ -128,9 +200,12 @@ impl GraphCanvas {
         graph.register_template(template);
 
         Ok(GraphCanvas {
+            settings: Arc::new(GraphCanvasSettings {
+                context_menu_size: (400.0, 100.0),
+            }),
             graph: Arc::new(Mutex::new(graph)),
             canvas: canvas_clone,
-            drag_state: Arc::new(Mutex::new(DragState::new())),
+            connection_drag_state: Arc::new(Mutex::new(ConnectionDragState::new())),
         })
     }
 }
@@ -160,6 +235,20 @@ impl GraphCanvas {
     }
 }
 
+#[derive(Clone)]
+struct ContextMenuItem {
+    label: String,
+    action: ContextMenuAction,
+    color: String,
+}
+
+#[derive(Clone)]
+enum ContextMenuAction {
+    Delete,
+    DeleteAllConnections,
+}
+
+/// Rendering
 #[wasm_bindgen]
 impl GraphCanvas {
     // Rendering - skips if locked
@@ -170,7 +259,9 @@ impl GraphCanvas {
             .unwrap()
             .dyn_into::<CanvasRenderingContext2d>()?;
 
-        if let (Ok(graph), Ok(drag_state)) = (self.graph.try_lock(), self.drag_state.try_lock()) {
+        if let (Ok(graph), Ok(drag_state)) =
+            (self.graph.try_lock(), self.connection_drag_state.try_lock())
+        {
             self.do_render(&context, &graph)?;
 
             // Draw in-progress connection if dragging
@@ -225,7 +316,90 @@ impl GraphCanvas {
             self.draw_node(context, instance, graph)?;
         }
 
+        // Draw context menu if it exists
+        if let Some(ref menu) = graph.context_menu {
+            self.draw_context_menu(context, menu)?;
+        }
         Ok(())
+    }
+
+    fn draw_context_menu(
+        &self,
+        context: &CanvasRenderingContext2d,
+        menu: &ContextMenu,
+    ) -> Result<(), JsValue> {
+        const PADDING: f64 = 10.0;
+        const ITEM_HEIGHT: f64 = 30.0;
+        const TITLE_HEIGHT: f64 = 25.0;
+
+        // Get menu items based on target type
+        let items = self.get_context_menu_items(&menu.target_type)?;
+        let title = menu.target_type.get_title(&self.graph.lock().unwrap());
+
+        let menu_height = TITLE_HEIGHT + (items.len() as f64 * ITEM_HEIGHT) + (PADDING * 2.0);
+
+        // Draw menu background
+        context.set_fill_style_str("#ffffff");
+        context.set_stroke_style_str("#000000");
+        context.begin_path();
+        context.rect(
+            menu.x,
+            menu.y,
+            self.settings.context_menu_size.0,
+            menu_height,
+        );
+        context.fill();
+        context.stroke();
+
+        // Draw title
+        context.set_fill_style_str("#000000");
+        context.set_font("bold 14px Arial");
+        context.set_text_align("left");
+        context.fill_text(&title, menu.x + PADDING, menu.y + 20.0)?;
+
+        // Draw separator line
+        context.begin_path();
+        context.move_to(menu.x, menu.y + TITLE_HEIGHT);
+        context.line_to(
+            menu.x + self.settings.context_menu_size.0,
+            menu.y + TITLE_HEIGHT,
+        );
+        context.stroke();
+
+        // Draw menu items
+        context.set_font("12px Arial");
+        for (i, item) in items.iter().enumerate() {
+            let y_pos = menu.y + TITLE_HEIGHT + (i as f64 * ITEM_HEIGHT);
+
+            // Draw item background
+            context.set_fill_style_str(&item.color);
+            context.fill_text(&item.label, menu.x + PADDING, y_pos + 20.0)?;
+        }
+
+        Ok(())
+    }
+
+    fn get_context_menu_items(
+        &self,
+        target: &ContextMenuTarget,
+    ) -> Result<Vec<ContextMenuItem>, JsValue> {
+        match target {
+            ContextMenuTarget::Node(_) => Ok(vec![ContextMenuItem {
+                label: "Delete Node".to_string(),
+                action: ContextMenuAction::Delete,
+                color: "#ff0000".to_string(),
+            }]),
+            ContextMenuTarget::Connection { .. } => Ok(vec![ContextMenuItem {
+                label: "Delete Connection".to_string(),
+                action: ContextMenuAction::Delete,
+                color: "#ff0000".to_string(),
+            }]),
+            ContextMenuTarget::Slot { .. } => Ok(vec![ContextMenuItem {
+                label: "Delete All Connections".to_string(),
+                action: ContextMenuAction::DeleteAllConnections,
+                color: "#ff0000".to_string(),
+            }]),
+        }
     }
 
     fn draw_node(
@@ -484,15 +658,16 @@ impl GraphCanvas {
 #[wasm_bindgen]
 impl GraphCanvas {
     pub fn handle_mouse_down(&self, x: f64, y: f64) -> Result<(), JsValue> {
-        log("running mouse down");
         let mut graph = self
             .graph
             .lock()
             .map_err(|e| JsValue::from_str(&format!("Failed to lock graph: {}", e)))?;
         let mut drag_state = self
-            .drag_state
+            .connection_drag_state
             .lock()
             .map_err(|e| JsValue::from_str(&format!("Failed to lock drag_state: {}", e)))?;
+
+        graph.is_mouse_down = true;
 
         // Check if we clicked on a slot
         for (node_id, node) in &graph.node_instances {
@@ -514,9 +689,7 @@ impl GraphCanvas {
                 && y >= instance.y
                 && y <= instance.y + instance.height
             {
-                log("is in box");
                 graph.selected_instance = Some(id.clone());
-                graph.dragging = true;
                 return Ok(());
             }
         }
@@ -526,17 +699,28 @@ impl GraphCanvas {
 
     pub fn handle_mouse_move(&self, x: f64, y: f64) -> Result<(), JsValue> {
         let mut drag_state = self
-            .drag_state
+            .connection_drag_state
             .lock()
             .map_err(|e| JsValue::from_str(&format!("Failed to lock drag_state: {}", e)))?;
 
-        if drag_state.active {
-            drag_state.current_x = x;
-            drag_state.current_y = y;
-        }
-
         if let Ok(mut graph) = self.graph.lock() {
-            if graph.dragging {
+            if graph.is_mouse_down
+                && graph.selected_instance.is_some()
+                && !drag_state.active
+                && graph.is_dragging_node == false
+            {
+                graph.context_menu = None;
+                graph.is_dragging_node = true;
+            }
+            if drag_state.active && graph.context_menu.is_some() {
+                graph.context_menu = None;
+            }
+
+            if drag_state.active {
+                drag_state.current_x = x;
+                drag_state.current_y = y;
+            }
+            if graph.is_dragging_node {
                 if let Some(ref selected_id) = graph.selected_instance.clone() {
                     if let Some(instance) = graph.node_instances.get_mut(selected_id) {
                         instance.x = x - instance.width / 2.0;
@@ -555,25 +739,28 @@ impl GraphCanvas {
             .lock()
             .map_err(|e| JsValue::from_str(&format!("Failed to lock graph: {}", e)))?;
         let mut drag_state = self
-            .drag_state
+            .connection_drag_state
             .lock()
             .map_err(|e| JsValue::from_str(&format!("Failed to lock drag_state: {}", e)))?;
+        graph.is_mouse_down = false;
 
         if drag_state.active {
+            let resetter = DragStateResetter::new(&mut *drag_state, &mut *graph);
             // Check if we're over another node
-            for (target_node_id, target_node) in graph.node_instances.clone().into_iter() {
+            for (target_node_id, target_node) in resetter.graph.node_instances.clone().into_iter() {
                 // Don't connect to self
-                if Some(target_node_id.clone()) != drag_state.from_node {
+                if Some(target_node_id.clone()) != resetter.drag_state.from_node {
                     // Check if point is within node bounds
                     if x >= target_node.x
                         && x <= target_node.x + target_node.width
                         && y >= target_node.y
                         && y <= target_node.y + target_node.height
                     {
-                        if let (Some(from_node), Some(from_slot)) =
-                            (drag_state.from_node.clone(), drag_state.from_slot.clone())
-                        {
-                            graph.connect_slots(
+                        if let (Some(from_node), Some(from_slot)) = (
+                            resetter.drag_state.from_node.clone(),
+                            resetter.drag_state.from_slot.clone(),
+                        ) {
+                            resetter.graph.connect_slots(
                                 &from_node,
                                 &from_slot,
                                 &target_node_id,
@@ -583,11 +770,112 @@ impl GraphCanvas {
                     }
                 }
             }
-        }
+        } else if !graph.is_dragging_node {
+            if let Some(context_menu) = &graph.context_menu {
+                log("running");
+                // If context menu is open and the click was within the menu, do nothing and return
+                if x >= context_menu.x
+                    && x <= context_menu.x + self.settings.context_menu_size.0
+                    && y >= context_menu.y
+                    && y <= context_menu.y + self.settings.context_menu_size.1
+                {
+                    log("running inside");
+                    return Ok(());
+                }
+            }
+            for (instance_id, instance) in graph.node_instances.iter() {
+                // Check Slots
+                for slot in &instance.slots {
+                    if self.is_point_in_slot(x, y, instance, slot, &graph) {
+                        graph.context_menu = Some(ContextMenu {
+                            x,
+                            y,
+                            target_type: ContextMenuTarget::Slot {
+                                node_id: instance_id.clone(),
+                                slot_id: slot.id.clone(),
+                            },
+                        });
+                        return Ok(());
+                    }
+                }
 
-        // Reset drag state
-        *drag_state = DragState::new();
-        graph.dragging = false;
+                // Check Nodes
+                if x >= instance.x
+                    && x <= instance.x + instance.width
+                    && y >= instance.y
+                    && y <= instance.y + instance.height
+                {
+                    graph.context_menu = Some(ContextMenu {
+                        x,
+                        y,
+                        target_type: ContextMenuTarget::Node(instance_id.clone()),
+                    });
+                    return Ok(());
+                }
+                // Check to see if the click was on a connection
+                for slot in &instance.slots {
+                    for connection in &slot.connections {
+                        if let Some(target_instance) =
+                            graph.node_instances.get(&connection.target_node_id)
+                        {
+                            if let Some(target_slot) = target_instance
+                                .slots
+                                .iter()
+                                .find(|s| s.slot_template_id == connection.target_slot_id)
+                            {
+                                let (start_x, start_y) = self.calculate_slot_position(
+                                    &graph
+                                        .node_templates
+                                        .get(&instance.template_id)
+                                        .unwrap()
+                                        .slot_templates
+                                        .iter()
+                                        .find(|t| t.id == slot.slot_template_id)
+                                        .unwrap()
+                                        .position,
+                                    instance,
+                                );
+                                let (end_x, end_y) = self.calculate_slot_position(
+                                    &graph
+                                        .node_templates
+                                        .get(&target_instance.template_id)
+                                        .unwrap()
+                                        .slot_templates
+                                        .iter()
+                                        .find(|t| t.id == target_slot.slot_template_id)
+                                        .unwrap()
+                                        .position,
+                                    target_instance,
+                                );
+
+                                let distance = self.distance_to_bezier_curve(
+                                    (x, y),
+                                    (start_x, start_y),
+                                    (end_x, end_y),
+                                    50.0, // control_distance, same as used in draw_connection
+                                );
+
+                                if distance < 5.0 {
+                                    graph.context_menu = Some(ContextMenu {
+                                        x,
+                                        y,
+                                        target_type: ContextMenuTarget::Connection {
+                                            from_node: instance.instance_id.clone(),
+                                            from_slot: slot.id.clone(),
+                                            to_node: target_instance.instance_id.clone(),
+                                            to_slot: target_slot.id.clone(),
+                                        },
+                                    });
+                                    return Ok(());
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        graph.is_dragging_node = false;
+        graph.context_menu = None;
 
         Ok(())
     }
@@ -607,5 +895,53 @@ impl GraphCanvas {
         let dx = x - slot_x;
         let dy = y - slot_y;
         dx * dx + dy * dy <= radius * radius
+    }
+}
+
+impl GraphCanvas {
+    fn get_bezier_point(
+        &self,
+        t: f64,
+        p0: (f64, f64),
+        p1: (f64, f64),
+        p2: (f64, f64),
+        p3: (f64, f64),
+    ) -> (f64, f64) {
+        let t2 = t * t;
+        let t3 = t2 * t;
+        let mt = 1.0 - t;
+        let mt2 = mt * mt;
+        let mt3 = mt2 * mt;
+
+        let x = p0.0 * mt3 + 3.0 * p1.0 * mt2 * t + 3.0 * p2.0 * mt * t2 + p3.0 * t3;
+        let y = p0.1 * mt3 + 3.0 * p1.1 * mt2 * t + 3.0 * p2.1 * mt * t2 + p3.1 * t3;
+
+        (x, y)
+    }
+
+    fn distance_to_bezier_curve(
+        &self,
+        point: (f64, f64),
+        start: (f64, f64),
+        end: (f64, f64),
+        control_distance: f64,
+    ) -> f64 {
+        let (cp1_x, cp1_y) = (start.0 + control_distance, start.1);
+        let (cp2_x, cp2_y) = (end.0 - control_distance, end.1);
+
+        // Sample points along the curve
+        let samples = 50;
+        let mut min_distance = f64::MAX;
+
+        for i in 0..=samples {
+            let t = i as f64 / samples as f64;
+            let curve_point = self.get_bezier_point(t, start, (cp1_x, cp1_y), (cp2_x, cp2_y), end);
+
+            let distance =
+                ((point.0 - curve_point.0).powi(2) + (point.1 - curve_point.1).powi(2)).sqrt();
+            min_distance = min_distance.min(distance);
+        }
+
+        min_distance
     }
 }
