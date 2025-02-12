@@ -2,7 +2,9 @@ use wasm_bindgen::prelude::*;
 
 use crate::{
     draw::SLOT_DRAW_RADIUS,
-    graph::{Graph, NodeInstance, SlotInstance},
+    errors::{log_and_convert_error, GraphError, GraphResult, IntoJsError},
+    events::{EventSystem, SystemEvent},
+    graph::{Connection, Graph, GraphCommand, NodeInstance, SlotInstance},
     log, GraphCanvas,
 };
 
@@ -34,18 +36,20 @@ impl<'a> Drop for DragStateResetter<'a> {
 
 pub struct InteractionState {
     pub is_mouse_down: bool,
-    pub mouse_down_on_node: Option<String>,
+    pub click_initiated_on_node: Option<String>,
+    pub click_initiated_on_slot: Option<(String, String)>,
     pub is_dragging_node: bool,
     pub connection_drag: Option<ConnectionDragInfo>,
     pub context_menu: Option<ContextMenu>,
-    pub selected_element: Option<SelectedElement>,
+    // pub selected_element: Option<SelectedElement>,
 }
 impl InteractionState {
     pub fn new() -> Self {
         Self {
-            selected_element: None,
+            // selected_element: None,
             is_mouse_down: false,
-            mouse_down_on_node: None,
+            click_initiated_on_node: None,
+            click_initiated_on_slot: None,
             is_dragging_node: false,
             context_menu: None,
             connection_drag: None,
@@ -61,38 +65,32 @@ pub struct ConnectionDragInfo {
     pub current_y: f64,
 }
 
-pub enum SelectedElement {
-    Node(String),
-    Slot {
-        node_id: String,
-        slot_id: String,
-    },
-    Connection {
-        from_node: String,
-        from_slot: String,
-        to_node: String,
-        to_slot: String,
-    },
-}
+// pub enum SelectedElement {
+//     Node(String),
+//     Slot {
+//         node_id: String,
+//         slot_id: String,
+//     },
+//     Connection {
+//         from_node: String,
+//         from_slot: String,
+//         to_node: String,
+//         to_slot: String,
+//     },
+// }
 
 pub struct ContextMenu {
     pub x: f64,
     pub y: f64,
     pub target_type: ContextMenuTarget,
+    pub items: Vec<ContextMenuItem>,
 }
+#[derive(Clone, Debug)]
 pub enum ContextMenuTarget {
     Node(String),
     // from_node
-    Connection {
-        from_node: String,
-        from_slot: String,
-        to_node: String,
-        to_slot: String,
-    },
-    Slot {
-        node_id: String,
-        slot_id: String,
-    },
+    Connection(Connection),
+    Slot { node_id: String, slot_id: String },
 }
 impl ContextMenuTarget {
     pub fn get_title(&self, graph: &Graph) -> String {
@@ -133,31 +131,135 @@ pub struct ContextMenuItem {
     pub label: String,
     pub action: ContextMenuAction,
     pub color: String,
+    pub bounds: Option<Rectangle>,
+}
+
+#[derive(Clone)]
+pub struct Rectangle {
+    pub x: f64,
+    pub y: f64,
+    pub width: f64,
+    pub height: f64,
+}
+
+impl Rectangle {
+    pub fn contains(&self, x: f64, y: f64) -> bool {
+        x >= self.x && x <= self.x + self.width && y >= self.y && y <= self.y + self.height
+    }
 }
 
 #[derive(Clone)]
 pub enum ContextMenuAction {
     Delete,
-    DeleteAllConnections,
+    DeleteAllSlotConnections,
 }
 #[wasm_bindgen]
 impl GraphCanvas {
     pub fn handle_mouse_down(&self, x: f64, y: f64) -> Result<(), JsValue> {
-        let graph = self.graph.lock().unwrap();
-        let mut ix = self.interaction.lock().unwrap();
+        let mut ix = self
+            .interaction
+            .lock()
+            .map_err(|e| log_and_convert_error(e))?;
+        let mut graph = self.graph.lock().map_err(|e| log_and_convert_error(e))?;
+        let events = self.events.lock().map_err(|e| log_and_convert_error(e))?;
+        self.internal_handle_mouse_down(x, y, &mut graph, &mut ix, &events)
+            .map_err(|e| log_and_convert_error(e))?;
+        Ok(())
+    }
+
+    pub fn handle_mouse_move(&self, x: f64, y: f64) -> Result<(), JsValue> {
+        let mut ix = self
+            .interaction
+            .lock()
+            .map_err(|e| log_and_convert_error(e))?;
+        let mut graph = self.graph.lock().map_err(|e| log_and_convert_error(e))?;
+        let events = self.events.lock().map_err(|e| log_and_convert_error(e))?;
+
+        self.internal_handle_mouse_move(x, y, &mut graph, &mut ix, &events)
+            .map_err(|e| log_and_convert_error(e))?;
+        Ok(())
+    }
+
+    pub fn handle_mouse_up(&self, x: f64, y: f64) -> Result<(), JsValue> {
+        let mut ix = self
+            .interaction
+            .lock()
+            .map_err(|e| log_and_convert_error(e))?;
+        let mut graph = self.graph.lock().map_err(|e| log_and_convert_error(e))?;
+        let events = self.events.lock().map_err(|e| log_and_convert_error(e))?;
+
+        self.internal_handle_mouse_up(x, y, &mut graph, &mut ix, &events)
+            .map_err(|e| log_and_convert_error(e))?;
+        Ok(())
+    }
+
+    fn handle_context_menu_action(
+        &self,
+        action: ContextMenuAction,
+        target: &ContextMenuTarget,
+        graph: &mut Graph,
+        events: &EventSystem,
+    ) -> GraphResult<()> {
+        match (action, target) {
+            (ContextMenuAction::Delete, ContextMenuTarget::Node(node_id)) => {
+                graph.execute_command(GraphCommand::DeleteNode(node_id.clone()), events);
+            }
+            (ContextMenuAction::Delete, ContextMenuTarget::Connection(connection)) => {
+                graph.execute_command(GraphCommand::DeleteConnection(connection.clone()), events);
+            }
+            (
+                ContextMenuAction::DeleteAllSlotConnections,
+                ContextMenuTarget::Slot { node_id, slot_id },
+            ) => {
+                graph.execute_command(
+                    GraphCommand::DeleteSlotConnections {
+                        node_id: node_id.clone(),
+                        slot_id: slot_id.clone(),
+                    },
+                    events,
+                );
+            }
+            _ => {
+                todo!();
+            }
+        }
+        Ok(())
+    }
+
+    fn is_point_in_slot(
+        &self,
+        x: f64,
+        y: f64,
+        node: &NodeInstance,
+        slot: &SlotInstance,
+        graph: &Graph,
+    ) -> bool {
+        let capa = slot.capabilities(graph);
+        let (slot_x, slot_y) = self.calculate_slot_position(&capa.template.position, node);
+        let radius = SLOT_DRAW_RADIUS; // Same as drawing radius
+
+        let dx = x - slot_x;
+        let dy = y - slot_y;
+        dx * dx + dy * dy <= radius * radius
+    }
+}
+
+impl GraphCanvas {
+    fn internal_handle_mouse_down(
+        &self,
+        x: f64,
+        y: f64,
+        graph: &mut Graph,
+        ix: &mut InteractionState,
+        events: &EventSystem,
+    ) -> GraphResult<()> {
         ix.is_mouse_down = true;
 
         // Check if we clicked on a slot
         for (node_id, node) in &graph.node_instances {
             for slot in &node.slots {
                 if self.is_point_in_slot(x, y, node, slot, &graph) {
-                    ix.connection_drag = Some(ConnectionDragInfo {
-                        from_node: node_id.clone(),
-                        from_slot: slot.id.clone(),
-                        current_x: x,
-                        current_y: y,
-                    });
-                    return Ok(());
+                    ix.click_initiated_on_slot = Some((node_id.clone(), slot.id.clone()));
                 }
             }
         }
@@ -168,32 +270,58 @@ impl GraphCanvas {
                 && y >= instance.y
                 && y <= instance.y + instance.height
             {
-                ix.mouse_down_on_node = Some(id.clone());
+                ix.click_initiated_on_node = Some(id.clone());
                 return Ok(());
             }
         }
-        ix.mouse_down_on_node = None;
+        ix.click_initiated_on_node = None;
         Ok(())
     }
 
-    pub fn handle_mouse_move(&self, x: f64, y: f64) -> Result<(), JsValue> {
-        // let mut drag_state = self
-        //     .connection_drag_state
-        //     .lock()
-        //     .map_err(|e| JsValue::from_str(&format!("Failed to lock drag_state: {}", e)))?;
-
-        let mut ix = self.interaction.lock().unwrap();
-        let mut graph = self.graph.lock().unwrap();
+    fn internal_handle_mouse_move(
+        &self,
+        x: f64,
+        y: f64,
+        graph: &mut Graph,
+        ix: &mut InteractionState,
+        events: &EventSystem,
+    ) -> GraphResult<()> {
         if ix.is_mouse_down
-            && ix.mouse_down_on_node.is_some()
+            && ix.click_initiated_on_node.is_some()
             && ix.connection_drag.is_none()
             && ix.is_dragging_node == false
         {
-            ix.context_menu = None;
+            if ix.context_menu.is_some() {
+                ix.context_menu = None;
+                events.emit(SystemEvent::ContextMenuClosed);
+            }
             ix.is_dragging_node = true;
         }
-        if ix.connection_drag.is_some() && ix.context_menu.is_some() {
-            ix.context_menu = None;
+        if ix.is_mouse_down && ix.click_initiated_on_slot.is_some() && ix.connection_drag.is_none()
+        {
+            if ix.context_menu.is_some() {
+                ix.context_menu = None;
+                events.emit(SystemEvent::ContextMenuClosed);
+            }
+            let (node_id, slot_id) = ix.click_initiated_on_slot.clone().unwrap();
+            let slot = graph
+                .node_instances
+                .get(&node_id)
+                .unwrap()
+                .slots
+                .iter()
+                .find(|s| s.id == slot_id)
+                .unwrap();
+            ix.connection_drag = Some(ConnectionDragInfo {
+                from_node: node_id.clone(),
+                from_slot: slot_id,
+                current_x: x,
+                current_y: y,
+            });
+            events.emit(SystemEvent::ConnectionStarted {
+                node: node_id.clone(),
+                slot: slot.id.clone(),
+            });
         }
 
         if let Some(connection_drag) = &mut ix.connection_drag {
@@ -201,7 +329,7 @@ impl GraphCanvas {
             connection_drag.current_y = y;
         }
         if ix.is_dragging_node {
-            if let Some(ref selected_id) = ix.mouse_down_on_node.clone() {
+            if let Some(ref selected_id) = ix.click_initiated_on_node.clone() {
                 if let Some(instance) = graph.node_instances.get_mut(selected_id) {
                     instance.x = x - instance.width / 2.0;
                     instance.y = y - instance.height / 2.0;
@@ -211,13 +339,17 @@ impl GraphCanvas {
 
         Ok(())
     }
-
-    pub fn handle_mouse_up(&self, x: f64, y: f64) -> Result<(), JsValue> {
-        let mut ix = self.interaction.lock().unwrap();
-        let mut graph = self.graph.lock().unwrap();
-
+    fn internal_handle_mouse_up(
+        &self,
+        x: f64,
+        y: f64,
+        graph: &mut Graph,
+        ix: &mut InteractionState,
+        events: &EventSystem,
+    ) -> GraphResult<()> {
         ix.is_mouse_down = false;
 
+        // If we were creating a connection
         if ix.connection_drag.is_some() {
             let resetter = DragStateResetter::new(&mut *ix, &mut *graph);
             let connection_drag = resetter.interaction_state.connection_drag.clone().unwrap();
@@ -232,37 +364,77 @@ impl GraphCanvas {
                         && y <= target_node.y + target_node.height
                     {
                         resetter.graph.connect_slots(
-                            &connection_drag.from_node,
-                            &connection_drag.from_slot,
-                            &target_node_id,
-                            &"incoming",
+                            Connection {
+                                host_node_id: connection_drag.from_node.clone(),
+                                host_slot_id: connection_drag.from_slot.clone(),
+                                target_node_id,
+                                target_slot_id: "incoming".to_string(),
+                            },
+                            &events,
                         )?;
                     }
                 }
             }
+        }
+        // if we were dragging a node
+        else if ix.is_dragging_node && ix.click_initiated_on_node.is_some() {
+            if let Some(moved_node) = &ix.click_initiated_on_node {
+                events.emit(SystemEvent::NodeMoved {
+                    node: moved_node.clone(),
+                    x: x.clone(),
+                    y: y.clone(),
+                });
+            }
+            ix.is_dragging_node = false;
+            ix.click_initiated_on_node = None;
         } else if !ix.is_dragging_node {
-            if let Some(context_menu) = &ix.context_menu {
-                // If context menu is open and the click was within the menu, do nothing and return
-                if x >= context_menu.x
-                    && x <= context_menu.x + self.settings.context_menu_size.0
-                    && y >= context_menu.y
-                    && y <= context_menu.y + self.settings.context_menu_size.1
+            // If context menu is open and the click was within the menu
+            if let Some(menu) = &ix.context_menu {
+                if x >= menu.x
+                    && x <= menu.x + self.settings.context_menu_size.0
+                    && y >= menu.y
+                    && y <= menu.y + self.settings.context_menu_size.1
                 {
+                    // if the click was on a menu item, handle the action
+                    for item in &menu.items {
+                        if let Some(bounds) = &item.bounds {
+                            if bounds.contains(x, y) {
+                                // Handle the action
+                                self.handle_context_menu_action(
+                                    item.action.clone(),
+                                    &menu.target_type,
+                                    graph,
+                                    &events,
+                                )?;
+                                // Close menu after action
+                                ix.context_menu = None;
+                                events.emit(SystemEvent::ContextMenuClosed);
+                                return Ok(());
+                            }
+                        }
+                    }
+
+                    // If it was not on a menu-item, do nothing
                     return Ok(());
                 }
             }
+
+            //
             for (instance_id, instance) in graph.node_instances.iter() {
                 // Check Slots
                 for slot in &instance.slots {
                     if self.is_point_in_slot(x, y, instance, slot, &graph) {
+                        let context_target = ContextMenuTarget::Slot {
+                            node_id: instance_id.clone(),
+                            slot_id: slot.id.clone(),
+                        };
                         ix.context_menu = Some(ContextMenu {
                             x,
                             y,
-                            target_type: ContextMenuTarget::Slot {
-                                node_id: instance_id.clone(),
-                                slot_id: slot.id.clone(),
-                            },
+                            target_type: context_target.clone(),
+                            items: vec![],
                         });
+                        events.emit(SystemEvent::ContextMenuOpened(context_target));
                         return Ok(());
                     }
                 }
@@ -273,11 +445,14 @@ impl GraphCanvas {
                     && y >= instance.y
                     && y <= instance.y + instance.height
                 {
+                    let context_target = ContextMenuTarget::Node(instance_id.clone());
                     ix.context_menu = Some(ContextMenu {
                         x,
                         y,
-                        target_type: ContextMenuTarget::Node(instance_id.clone()),
+                        target_type: context_target.clone(),
+                        items: vec![],
                     });
+                    events.emit(SystemEvent::ContextMenuOpened(context_target));
                     return Ok(());
                 }
                 // Check to see if the click was on a connection
@@ -324,16 +499,20 @@ impl GraphCanvas {
                                 );
 
                                 if distance < 5.0 {
+                                    let context_target =
+                                        ContextMenuTarget::Connection(Connection {
+                                            host_node_id: instance.instance_id.clone(),
+                                            host_slot_id: slot.id.clone(),
+                                            target_node_id: target_instance.instance_id.clone(),
+                                            target_slot_id: target_slot.id.clone(),
+                                        });
                                     ix.context_menu = Some(ContextMenu {
                                         x,
                                         y,
-                                        target_type: ContextMenuTarget::Connection {
-                                            from_node: instance.instance_id.clone(),
-                                            from_slot: slot.id.clone(),
-                                            to_node: target_instance.instance_id.clone(),
-                                            to_slot: target_slot.id.clone(),
-                                        },
+                                        target_type: context_target.clone(),
+                                        items: vec![],
                                     });
+                                    events.emit(SystemEvent::ContextMenuOpened(context_target));
                                     return Ok(());
                                 }
                             }
@@ -343,25 +522,11 @@ impl GraphCanvas {
             }
         }
         ix.is_dragging_node = false;
-        ix.context_menu = None;
+        if ix.context_menu.is_some() {
+            ix.context_menu = None;
+            events.emit(SystemEvent::ContextMenuClosed);
+        }
 
         Ok(())
-    }
-
-    fn is_point_in_slot(
-        &self,
-        x: f64,
-        y: f64,
-        node: &NodeInstance,
-        slot: &SlotInstance,
-        graph: &Graph,
-    ) -> bool {
-        let capa = slot.capabilities(graph);
-        let (slot_x, slot_y) = self.calculate_slot_position(&capa.template.position, node);
-        let radius = SLOT_DRAW_RADIUS; // Same as drawing radius
-
-        let dx = x - slot_x;
-        let dy = y - slot_y;
-        dx * dx + dy * dy <= radius * radius
     }
 }

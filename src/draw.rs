@@ -4,11 +4,11 @@ use web_sys::{window, CanvasRenderingContext2d};
 
 pub const SLOT_DRAW_RADIUS: f64 = 7.0;
 
-use crate::log;
 use crate::{
     graph::{Graph, NodeInstance, SlotInstance, SlotPosition, SlotTemplate, SlotType},
     interaction::{
         ContextMenu, ContextMenuAction, ContextMenuItem, ContextMenuTarget, InteractionState,
+        Rectangle,
     },
     GraphCanvas,
 };
@@ -47,8 +47,10 @@ impl GraphCanvas {
             .unwrap()
             .dyn_into::<CanvasRenderingContext2d>()?;
 
-        if let (Ok(graph), Ok(interaction)) = (self.graph.try_lock(), self.interaction.try_lock()) {
-            self.do_render(&context, &graph, &interaction)?;
+        if let (Ok(graph), Ok(interaction)) =
+            (self.graph.try_lock(), &mut self.interaction.try_lock())
+        {
+            self.do_render(&context, &graph, interaction)?;
         }
 
         Ok(())
@@ -59,7 +61,7 @@ impl GraphCanvas {
         &self,
         context: &CanvasRenderingContext2d,
         graph: &Graph,
-        interaction: &InteractionState,
+        interaction: &mut InteractionState,
     ) -> Result<(), JsValue> {
         context.clear_rect(
             0.0,
@@ -75,7 +77,7 @@ impl GraphCanvas {
         }
 
         // Draw context menu if it exists
-        if let Some(ref menu) = interaction.context_menu {
+        if let Some(menu) = &mut interaction.context_menu {
             self.draw_context_menu(context, menu, graph)?;
         }
 
@@ -87,7 +89,7 @@ impl GraphCanvas {
     fn draw_context_menu(
         &self,
         context: &CanvasRenderingContext2d,
-        menu: &ContextMenu,
+        menu: &mut ContextMenu,
         graph: &Graph,
     ) -> Result<(), JsValue> {
         const PADDING: f64 = 10.0;
@@ -95,7 +97,7 @@ impl GraphCanvas {
         const TITLE_HEIGHT: f64 = 25.0;
 
         // Get menu items based on target type
-        let items = self.get_context_menu_items(&menu.target_type)?;
+        let mut items = self.get_context_menu_items(&menu.target_type)?;
         let title = menu.target_type.get_title(graph);
 
         let menu_height = TITLE_HEIGHT + (items.len() as f64 * ITEM_HEIGHT) + (PADDING * 2.0);
@@ -128,40 +130,28 @@ impl GraphCanvas {
         );
         context.stroke();
 
-        // Draw menu items
+        // Draw menu items and store their bounds
         context.set_font("12px Arial");
-        for (i, item) in items.iter().enumerate() {
+        for (i, item) in items.iter_mut().enumerate() {
             let y_pos = menu.y + TITLE_HEIGHT + (i as f64 * ITEM_HEIGHT);
 
-            // Draw item background
+            // Store the bounds for this item
+            item.bounds = Some(Rectangle {
+                x: menu.x,
+                y: y_pos,
+                width: self.settings.context_menu_size.0,
+                height: ITEM_HEIGHT,
+            });
+
+            // Draw item background (maybe highlight if mouse is over)
             context.set_fill_style_str(&item.color);
             context.fill_text(&item.label, menu.x + PADDING, y_pos + 20.0)?;
         }
 
-        Ok(())
-    }
+        // Update the menu's items with their bounds
+        menu.items = items;
 
-    fn get_context_menu_items(
-        &self,
-        target: &ContextMenuTarget,
-    ) -> Result<Vec<ContextMenuItem>, JsValue> {
-        match target {
-            ContextMenuTarget::Node(_) => Ok(vec![ContextMenuItem {
-                label: "Delete Node".to_string(),
-                action: ContextMenuAction::Delete,
-                color: "#ff0000".to_string(),
-            }]),
-            ContextMenuTarget::Connection { .. } => Ok(vec![ContextMenuItem {
-                label: "Delete Connection".to_string(),
-                action: ContextMenuAction::Delete,
-                color: "#ff0000".to_string(),
-            }]),
-            ContextMenuTarget::Slot { .. } => Ok(vec![ContextMenuItem {
-                label: "Delete All Connections".to_string(),
-                action: ContextMenuAction::DeleteAllConnections,
-                color: "#ff0000".to_string(),
-            }]),
-        }
+        Ok(())
     }
 
     fn draw_dragging_connection(
@@ -419,6 +409,32 @@ impl GraphCanvas {
         let y = p0.1 * mt3 + 3.0 * p1.1 * mt2 * t + 3.0 * p2.1 * mt * t2 + p3.1 * t3;
 
         (x, y)
+    }
+
+    pub fn get_context_menu_items(
+        &self,
+        target: &ContextMenuTarget,
+    ) -> Result<Vec<ContextMenuItem>, JsValue> {
+        match target {
+            ContextMenuTarget::Node(_) => Ok(vec![ContextMenuItem {
+                label: "Delete Node".to_string(),
+                action: ContextMenuAction::Delete,
+                color: "#ff0000".to_string(),
+                bounds: None,
+            }]),
+            ContextMenuTarget::Connection { .. } => Ok(vec![ContextMenuItem {
+                label: "Delete Connection".to_string(),
+                action: ContextMenuAction::Delete,
+                color: "#ff0000".to_string(),
+                bounds: None,
+            }]),
+            ContextMenuTarget::Slot { .. } => Ok(vec![ContextMenuItem {
+                label: "Delete All Connections".to_string(),
+                action: ContextMenuAction::DeleteAllSlotConnections,
+                color: "#ff0000".to_string(),
+                bounds: None,
+            }]),
+        }
     }
 
     pub(crate) fn distance_to_bezier_curve(

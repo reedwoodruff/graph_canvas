@@ -11,15 +11,21 @@ use wasm_bindgen::JsCast;
 use web_sys::HtmlElement;
 use web_sys::{window, HtmlCanvasElement};
 
+mod common;
 mod draw;
+mod errors;
+mod events;
 mod graph;
 mod interaction;
-mod utils;
 
 #[wasm_bindgen]
 extern "C" {
     #[wasm_bindgen(js_namespace = console)]
     fn log(s: &str);
+    #[wasm_bindgen(js_namespace = console)]
+    fn error(s: &str);
+    #[wasm_bindgen(js_namespace = console)]
+    fn warn(s: &str);
 }
 
 #[derive(Clone)]
@@ -29,6 +35,7 @@ pub struct GraphCanvas {
     graph: Arc<Mutex<Graph>>,
     canvas: HtmlCanvasElement,
     interaction: Arc<Mutex<InteractionState>>,
+    events: Arc<Mutex<events::EventSystem>>,
 }
 
 #[derive(Clone)]
@@ -115,6 +122,11 @@ impl GraphCanvas {
         };
         graph.register_template(template);
 
+        let events = Arc::new(Mutex::new(events::EventSystem::new()));
+        events.lock().unwrap().subscribe(Box::new(|event| {
+            log(&format!("{:?}", event));
+        }));
+
         Ok(GraphCanvas {
             settings: Arc::new(GraphCanvasSettings {
                 context_menu_size: (400.0, 100.0),
@@ -122,6 +134,7 @@ impl GraphCanvas {
             graph: Arc::new(Mutex::new(graph)),
             canvas: canvas_clone,
             interaction: Arc::new(Mutex::new(InteractionState::new())),
+            events,
         })
     }
 }

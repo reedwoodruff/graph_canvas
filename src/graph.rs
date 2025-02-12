@@ -1,6 +1,13 @@
+use crate::{
+    error,
+    errors::{GraphError, GraphResult},
+};
 use std::collections::HashMap;
 
-use crate::utils::generate_id;
+use crate::{
+    common::generate_id,
+    events::{EventSystem, SystemEvent},
+};
 
 pub trait NodeTemplateInfo {
     fn get_slot_template(&self, slot_id: &str) -> Option<&SlotTemplate>;
@@ -128,6 +135,8 @@ pub struct SlotCapabilities<'a> {
 
 #[derive(Debug, Clone)]
 pub struct Connection {
+    pub host_node_id: String,
+    pub host_slot_id: String,
     pub target_node_id: String,
     pub target_slot_id: String,
 }
@@ -226,18 +235,18 @@ impl Graph {
             instance: slot,
         })
     }
-    pub fn is_valid_connection(
-        &self,
-        from_node_id: &str,
-        from_slot_id: &str,
-        target_node_id: &str,
-        target_slot_id: &str,
-    ) -> bool {
+    pub fn is_valid_connection(&self, connection: Connection) -> bool {
         // Check if connection is valid based on templates
         // Implementation would check slot types, allowed connections, and current cardinality
-        //
+
+        let Connection {
+            host_node_id,
+            host_slot_id,
+            target_node_id,
+            target_slot_id,
+        } = connection;
         let from_slot_cap = self
-            .get_slot_capabilities(&from_node_id, &from_slot_id)
+            .get_slot_capabilities(&host_node_id, &host_slot_id)
             .unwrap();
         let target_node_cap = self.get_node_capabilities(&target_node_id).unwrap();
         if from_slot_cap
@@ -257,34 +266,44 @@ impl Graph {
 
     pub fn connect_slots(
         &mut self,
-        from_node: &str,
-        from_slot: &str,
-        to_node: &str,
-        to_slot: &str,
-    ) -> Result<(), String> {
-        if !self.is_valid_connection(from_node, from_slot, to_node, to_slot) {
-            return Err("Invalid connection".to_string());
+        connection: Connection,
+        events: &EventSystem,
+    ) -> GraphResult<()> {
+        let Connection {
+            host_node_id,
+            host_slot_id,
+            ..
+        } = connection.clone();
+        if !self.is_valid_connection(connection.clone()) {
+            return Err(GraphError::InvalidConnection {
+                connection,
+                reason: "Connection Validation Failed".to_string(),
+            });
         }
 
         // Add connection to both slots
-        if let Some(from_instance) = self.node_instances.get_mut(from_node) {
-            if let Some(slot) = from_instance.slots.iter_mut().find(|s| s.id == from_slot) {
-                slot.connections.push(Connection {
-                    target_node_id: to_node.to_string(),
-                    target_slot_id: to_slot.to_string(),
-                });
+        if let Some(from_instance) = self.node_instances.get_mut(&host_node_id) {
+            if let Some(slot) = from_instance
+                .slots
+                .iter_mut()
+                .find(|s| s.id == host_slot_id)
+            {
+                slot.connections.push(connection.clone());
             }
         }
 
-        if let Some(to_instance) = self.node_instances.get_mut(to_node) {
-            if let Some(slot) = to_instance.slots.iter_mut().find(|s| s.id == to_slot) {
-                slot.connections.push(Connection {
-                    target_node_id: from_node.to_string(),
-                    target_slot_id: from_slot.to_string(),
-                });
-            }
-        }
+        // if let Some(to_instance) = self.node_instances.get_mut(to_node) {
+        //     if let Some(slot) = to_instance.slots.iter_mut().find(|s| s.id == to_slot) {
+        //         slot.connections.push(Connection {
+        //             host_node_id: to_node.to_string(),
+        //             host_slot_id: to_slot.to_string(),
+        //             target_node_id: from_node.to_string(),
+        //             target_slot_id: from_slot.to_string(),
+        //         });
+        //     }
+        // }
 
+        events.emit(SystemEvent::ConnectionCompleted(connection));
         Ok(())
     }
 
@@ -305,5 +324,111 @@ impl Graph {
             }
         }
         true
+    }
+    pub fn get_node_connections(&self, node_id: &str) -> Vec<Connection> {
+        self.node_instances
+            .get(node_id)
+            .map(|instance| {
+                instance
+                    .slots
+                    .iter()
+                    .flat_map(|slot| slot.connections.clone())
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
+
+    pub fn delete_connection(&mut self, connection: &Connection) -> GraphResult<()> {
+        let Connection {
+            host_node_id,
+            host_slot_id,
+            target_node_id,
+            target_slot_id,
+        } = connection;
+        if let Some(from_instance) = self.node_instances.get_mut(host_node_id) {
+            if let Some(slot) = from_instance
+                .slots
+                .iter_mut()
+                .find(|s| s.id == *host_slot_id)
+            {
+                slot.connections.retain(|c| {
+                    !(c.target_node_id == *target_node_id && c.target_slot_id == *target_slot_id)
+                });
+            }
+        }
+
+        if let Some(to_instance) = self.node_instances.get_mut(target_node_id) {
+            if let Some(slot) = to_instance
+                .slots
+                .iter_mut()
+                .find(|s| s.id == *target_slot_id)
+            {
+                slot.connections.retain(|c| {
+                    !(c.target_node_id == *host_node_id && c.target_slot_id == *host_slot_id)
+                });
+            }
+        }
+
+        Ok(())
+    }
+}
+
+#[derive(Clone, Debug)]
+pub enum GraphCommand {
+    DeleteNode(String),
+    DeleteConnection(Connection),
+    DeleteSlotConnections { node_id: String, slot_id: String },
+    CreateConnection(Connection),
+}
+
+impl Graph {
+    pub fn execute_command(
+        &mut self,
+        command: GraphCommand,
+        events: &EventSystem,
+    ) -> GraphResult<()> {
+        let result = match command.clone() {
+            GraphCommand::DeleteNode(node_id) => {
+                // First remove all connections to/from this node
+                let connections_to_remove = self.get_node_connections(&node_id);
+                for conn in connections_to_remove {
+                    self.delete_connection(&conn)?;
+                }
+                // Then remove the node
+                self.node_instances.remove(&node_id);
+                events.emit(SystemEvent::CommandExecuted(command));
+                Ok(())
+            }
+            GraphCommand::DeleteConnection(conn) => {
+                self.delete_connection(&conn)?;
+                events.emit(SystemEvent::CommandExecuted(command));
+                Ok(())
+            }
+            GraphCommand::DeleteSlotConnections { node_id, slot_id } => {
+                if let Some(instance) = self.node_instances.get_mut(&node_id) {
+                    if let Some(slot) = instance.slots.iter_mut().find(|s| s.id == slot_id) {
+                        slot.connections.clear();
+                        events.emit(SystemEvent::CommandExecuted(command));
+                        return Ok(());
+                    }
+                }
+                Err(GraphError::SlotNotFound {
+                    node_id: node_id.clone(),
+                    slot_id: slot_id.clone(),
+                })
+            }
+            GraphCommand::CreateConnection(connection) => {
+                self.connect_slots(connection, events)?;
+                events.emit(SystemEvent::CommandExecuted(command));
+                Ok(())
+            }
+        };
+        match &result {
+            Ok(_) => {}
+            Err(e) => {
+                error(&format!("Command failed: {:#}", e));
+            }
+        }
+        result
     }
 }
