@@ -237,7 +237,7 @@ impl GraphCanvas {
         graph: &Graph,
     ) -> bool {
         let capa = slot.capabilities(graph);
-        let (slot_x, slot_y) = self.calculate_slot_position(&capa.template.position, node);
+        let (slot_x, slot_y) = self.calculate_slot_position(&capa.template, node, graph);
         let radius = SLOT_DRAW_RADIUS; // Same as drawing radius
 
         let dx = x - slot_x;
@@ -478,9 +478,9 @@ impl GraphCanvas {
                                         .slot_templates
                                         .iter()
                                         .find(|t| t.id == slot.slot_template_id)
-                                        .unwrap()
-                                        .position,
+                                        .unwrap(),
                                     instance,
+                                    graph,
                                 );
                                 let (end_x, end_y) = self.calculate_slot_position(
                                     &graph
@@ -490,9 +490,9 @@ impl GraphCanvas {
                                         .slot_templates
                                         .iter()
                                         .find(|t| t.id == target_slot.slot_template_id)
-                                        .unwrap()
-                                        .position,
+                                        .unwrap(),
                                     target_instance,
+                                    graph,
                                 );
 
                                 let distance = self.distance_to_bezier_curve(

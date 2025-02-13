@@ -5,7 +5,9 @@ use web_sys::{window, CanvasRenderingContext2d};
 pub const SLOT_DRAW_RADIUS: f64 = 7.0;
 
 use crate::{
-    graph::{Graph, NodeInstance, SlotInstance, SlotPosition, SlotTemplate, SlotType},
+    graph::{
+        Graph, NodeInstance, NodeTemplateInfo, SlotInstance, SlotPosition, SlotTemplate, SlotType,
+    },
     interaction::{
         ContextMenu, ContextMenuAction, ContextMenuItem, ContextMenuTarget, InteractionState,
         Rectangle,
@@ -171,7 +173,7 @@ impl GraphCanvas {
                 {
                     let slot_template = slot.capabilities(&graph).template;
                     let (start_x, start_y) =
-                        self.calculate_slot_position(&slot_template.position, node.instance);
+                        self.calculate_slot_position(&slot_template, node.instance, graph);
 
                     // Draw the in-progress connection
                     context.begin_path();
@@ -220,7 +222,7 @@ impl GraphCanvas {
         for (slot_instance, slot_template) in
             instance.slots.iter().zip(template.slot_templates.iter())
         {
-            self.draw_slot(context, slot_instance, slot_template, instance)?;
+            self.draw_slot(context, slot_instance, slot_template, instance, graph)?;
         }
 
         Ok(())
@@ -232,31 +234,67 @@ impl GraphCanvas {
         slot_instance: &SlotInstance,
         slot_template: &SlotTemplate,
         node: &NodeInstance,
+        graph: &Graph,
     ) -> Result<(), JsValue> {
-        let (x, y) = self.calculate_slot_position(&slot_template.position, node);
+        // Triangle dimensions
+        // let triangle_size = SLOT_DRAW_RADIUS * 1.5; // Make triangle slightly larger than circle hitbox
+        let triangle_size = SLOT_DRAW_RADIUS;
 
-        // Draw slot circle
+        let (x, y) = self.calculate_slot_position(&slot_template, node, graph);
+
+        // Draw circle if it is incoming
         context.begin_path();
-        context.arc(x, y, SLOT_DRAW_RADIUS, 0.0, 2.0 * PI)?;
+        if slot_template.slot_type == SlotType::Incoming {
+            context.arc(x, y, SLOT_DRAW_RADIUS, 0.0, 2.0 * PI)?;
+        } else {
+            // Draw triangle based on position and type
+            match &slot_template.position {
+                SlotPosition::Left => {
+                    // Outgoing triangle pointing right
+                    context.move_to(x + triangle_size, y - triangle_size);
+                    context.line_to(x - triangle_size, y);
+                    context.line_to(x + triangle_size, y + triangle_size);
+                }
 
-        // Color based on slot type and connection status
+                SlotPosition::Right => {
+                    // Outgoing triangle pointing right
+                    context.move_to(x - triangle_size, y - triangle_size);
+                    context.line_to(x + triangle_size, y);
+                    context.line_to(x - triangle_size, y + triangle_size);
+                }
+                SlotPosition::Top => {
+                    // Outgoing triangle pointing up
+                    context.move_to(x - triangle_size, y + triangle_size);
+                    context.line_to(x + triangle_size, y + triangle_size);
+                    context.line_to(x, y - triangle_size);
+                }
+                SlotPosition::Bottom => {
+                    // Outgoing triangle pointing down
+                    context.move_to(x - triangle_size, y - triangle_size);
+                    context.line_to(x + triangle_size, y - triangle_size);
+                    context.line_to(x, y + triangle_size);
+                }
+            }
+        }
+        context.close_path();
+
+        // Color based on slot type and connection status (same as before)
         let fill_color = match (
             &slot_template.slot_type,
             slot_instance.connections.is_empty(),
             slot_instance.connections.len() < slot_template.min_connections,
             slot_instance.connections.len() < slot_template.max_connections,
         ) {
-            (SlotType::Input, _, _, _) => "#888888",
+            (SlotType::Incoming, _, _, _) => "#fff",
             (_, true, true, true) => "red",
             (_, false, true, true) => "orange",
             (_, _, false, true) => "lightgreen",
             (_, _, false, false) => "green",
             _ => "purple",
-            // (true) => "#888888",
-            // (false) => "#44aa44",
         };
         context.set_fill_style_str(fill_color);
         context.fill();
+        context.stroke();
 
         // Draw slot label
         context.set_font("12px Arial");
@@ -272,11 +310,11 @@ impl GraphCanvas {
             }
             SlotPosition::Top => {
                 context.set_text_align("center");
-                context.fill_text(&slot_template.name, x, y - 10.0)?;
+                context.fill_text(&slot_template.name, x, y + 20.0)?;
             }
             SlotPosition::Bottom => {
                 context.set_text_align("center");
-                context.fill_text(&slot_template.name, x, y + 20.0)?;
+                context.fill_text(&slot_template.name, x, y - 10.0)?;
             }
         }
 
@@ -342,8 +380,8 @@ impl GraphCanvas {
 
         // Calculate start and end points
         let (start_x, start_y) =
-            self.calculate_slot_position(&from_slot_template.position, from_node);
-        let (end_x, end_y) = self.calculate_slot_position(&to_slot_template.position, to_node);
+            self.calculate_slot_position(&from_slot_template, from_node, graph);
+        let (end_x, end_y) = self.calculate_slot_position(&to_slot_template, to_node, graph);
 
         // Draw curved connection line
         context.begin_path();
@@ -381,14 +419,69 @@ impl GraphCanvas {
 impl GraphCanvas {
     pub fn calculate_slot_position(
         &self,
-        position: &SlotPosition,
+        slot_template: &SlotTemplate,
         node: &NodeInstance,
+        graph: &Graph,
     ) -> (f64, f64) {
+        let node_template = node.capabilities(graph).template;
+        let position = &slot_template.position;
+        let direction = &slot_template.slot_type;
+
+        let slots_on_side = node_template
+            .slot_templates
+            .iter()
+            .filter(|s_t| s_t.position == slot_template.position)
+            .collect::<Vec<_>>();
+        let num_slots_on_side = slots_on_side.len();
+
+        // Find this slot's index among slots on the same side
+        let slot_index = slots_on_side
+            .iter()
+            .position(|slot_in_question| slot_in_question.id == slot_template.id)
+            .unwrap_or(0);
+
+        // Depending on the side and the directionality, push the slot in or out
+        let offset = match position {
+            SlotPosition::Left => match direction {
+                SlotType::Incoming => 0.0,
+                SlotType::Outgoing => -1.0,
+            },
+            SlotPosition::Right => match direction {
+                SlotType::Incoming => 0.0,
+                SlotType::Outgoing => 1.0,
+            },
+            SlotPosition::Top => match direction {
+                SlotType::Incoming => 0.0,
+                SlotType::Outgoing => -1.0,
+            },
+            SlotPosition::Bottom => match direction {
+                SlotType::Incoming => 0.0,
+                SlotType::Outgoing => 1.0,
+            },
+        } * SLOT_DRAW_RADIUS;
+
+        // Calculate position based on slot index and total slots
         match position {
-            SlotPosition::Left => (node.x, node.y + node.height / 2.0),
-            SlotPosition::Right => (node.x + node.width, node.y + node.height / 2.0),
-            SlotPosition::Top => (node.x + node.width / 2.0, node.y),
-            SlotPosition::Bottom => (node.x + node.width / 2.0, node.y + node.height),
+            SlotPosition::Left | SlotPosition::Right => {
+                let x = if *position == SlotPosition::Left {
+                    node.x
+                } else {
+                    node.x + node.width
+                } + offset;
+                let spacing = node.height / (num_slots_on_side as f64 + 1.0);
+                let y = node.y + spacing * (slot_index as f64 + 1.0);
+                (x, y)
+            }
+            SlotPosition::Top | SlotPosition::Bottom => {
+                let y = if *position == SlotPosition::Top {
+                    node.y
+                } else {
+                    node.y + node.height
+                } + offset;
+                let spacing = node.width / (num_slots_on_side as f64 + 1.0);
+                let x = node.x + spacing * (slot_index as f64 + 1.0);
+                (x, y)
+            }
         }
     }
     pub(crate) fn get_bezier_point(

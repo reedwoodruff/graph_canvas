@@ -151,8 +151,8 @@ pub enum SlotPosition {
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum SlotType {
-    Input,
-    Output,
+    Incoming,
+    Outgoing,
 }
 
 pub struct Graph {
@@ -174,7 +174,7 @@ impl Graph {
             id: "incoming".to_string(),
             name: "Incoming".to_string(),
             position: SlotPosition::Left,
-            slot_type: SlotType::Input,
+            slot_type: SlotType::Incoming,
             allowed_connections: Vec::new(),
             min_connections: 0,
             max_connections: 10000,
@@ -389,11 +389,31 @@ impl Graph {
     ) -> GraphResult<()> {
         let result = match command.clone() {
             GraphCommand::DeleteNode(node_id) => {
-                // First remove all connections to/from this node
+                // First remove all connections from this node
                 let connections_to_remove = self.get_node_connections(&node_id);
                 for conn in connections_to_remove {
                     self.delete_connection(&conn)?;
                 }
+                // Then remove all connections to this node
+                let connections_to_remove =
+                    self.node_instances.values().fold(vec![], |mut agg, inst| {
+                        agg.append(&mut inst.slots.iter().fold(vec![], |mut agg, slot| {
+                            agg.append(
+                                &mut slot
+                                    .connections
+                                    .iter()
+                                    .filter(|conn| conn.target_node_id == node_id)
+                                    .cloned()
+                                    .collect::<Vec<_>>(),
+                            );
+                            agg
+                        }));
+                        agg
+                    });
+                for conn in connections_to_remove {
+                    self.delete_connection(&conn)?;
+                }
+
                 // Then remove the node
                 self.node_instances.remove(&node_id);
                 events.emit(SystemEvent::CommandExecuted(command));
