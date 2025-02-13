@@ -72,6 +72,15 @@ impl GraphCanvas {
             self.canvas.height() as f64,
         );
 
+        // Save the current transform
+        context.save();
+
+        // Apply pan transform
+        context.translate(
+            interaction.view_transform.pan_x,
+            interaction.view_transform.pan_y,
+        )?;
+
         self.draw_connections(context, graph)?;
 
         for instance in graph.node_instances.values() {
@@ -85,6 +94,9 @@ impl GraphCanvas {
 
         // Draw dragging connection if it exists
         self.draw_dragging_connection(context, interaction, graph);
+
+        // Restore the original transform
+        context.restore();
         Ok(())
     }
 

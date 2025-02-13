@@ -18,6 +18,7 @@ pub enum GraphError {
     },
     ValidationFailed(String),
     LockFailed(String),
+    NodeCreationFailed(String),
 }
 
 impl fmt::Display for GraphError {
@@ -43,6 +44,7 @@ impl fmt::Display for GraphError {
             }
             GraphError::ValidationFailed(msg) => write!(f, "Validation failed: {}", msg),
             GraphError::LockFailed(msg) => write!(f, "Lock acquisition failed: {}", msg),
+            GraphError::NodeCreationFailed(id) => write!(f, "Node creation failed: {}", id),
         }
     }
 }

@@ -19,9 +19,9 @@
         </style>
     </head>
     <body>
-        <div class="controls">
-            <button id="add-node">Add Node</button>
-        </div>
+        <!-- <div class="controls"> -->
+        <!-- <button id="add-node">Add Node</button> -->
+        <!-- </div> -->
         <div id="graph-container"></div>
 
         <script type="module">
@@ -38,15 +38,15 @@
                 graph.start_render_loop();
 
                 // Add a test node when clicking the button
-                document
-                    .getElementById("add-node")
-                    .addEventListener("click", () => {
-                        // Add node at random position within container
-                        const x = Math.random() * (container.clientWidth - 100);
-                        const y =
-                            Math.random() * (container.clientHeight - 100);
-                        graph.add_node("test_node", x, y);
-                    });
+                // document
+                //     .getElementById("add-node")
+                //     .addEventListener("click", () => {
+                //         // Add node at random position within container
+                //         const x = Math.random() * (container.clientWidth - 100);
+                //         const y =
+                //             Math.random() * (container.clientHeight - 100);
+                //         graph.add_node("test_node", x, y);
+                //     });
             }
 
             main().catch(console.error);

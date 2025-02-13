@@ -371,6 +371,12 @@ impl Graph {
 
         Ok(())
     }
+    pub fn get_node_template_by_name(&self, name: &str) -> Option<NodeTemplate> {
+        self.node_templates
+            .values()
+            .find(|t| t.name == name)
+            .cloned()
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -379,6 +385,7 @@ pub enum GraphCommand {
     DeleteConnection(Connection),
     DeleteSlotConnections { node_id: String, slot_id: String },
     CreateConnection(Connection),
+    CreateNode { template_id: String, x: f64, y: f64 },
 }
 
 impl Graph {
@@ -441,6 +448,16 @@ impl Graph {
                 self.connect_slots(connection, events)?;
                 events.emit(SystemEvent::CommandExecuted(command));
                 Ok(())
+            }
+            GraphCommand::CreateNode { template_id, x, y } => {
+                let result = self.create_instance(&template_id, x, y);
+                match result {
+                    Some(node_id) => {
+                        events.emit(SystemEvent::CommandExecuted(command));
+                        Ok(())
+                    }
+                    None => Err(GraphError::NodeCreationFailed(template_id)),
+                }
             }
         };
         match &result {

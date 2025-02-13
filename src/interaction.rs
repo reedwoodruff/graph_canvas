@@ -43,10 +43,28 @@ pub struct InteractionState {
     pub is_dragging_node: bool,
     pub connection_drag: Option<ConnectionDragInfo>,
     pub context_menu: Option<ContextMenu>,
-    // pub selected_element: Option<SelectedElement>,
+    pub mode: InteractionMode,
+    pub current_node_template_name: String,
+    pub is_panning: bool,
+    pub view_transform: ViewTransform,
+}
+pub struct ViewTransform {
+    pub pan_x: f64,
+    pub pan_y: f64,
+}
+impl ViewTransform {
+    // Convert screen coordinates to graph coordinates
+    pub fn screen_to_graph(&self, x: f64, y: f64) -> (f64, f64) {
+        (x - self.pan_x, y - self.pan_y)
+    }
+
+    // Convert graph coordinates to screen coordinates
+    pub fn graph_to_screen(&self, x: f64, y: f64) -> (f64, f64) {
+        (x + self.pan_x, y + self.pan_y)
+    }
 }
 impl InteractionState {
-    pub fn new() -> Self {
+    pub fn new(graph: &Graph) -> Self {
         Self {
             // selected_element: None,
             is_mouse_down: false,
@@ -55,8 +73,20 @@ impl InteractionState {
             is_dragging_node: false,
             context_menu: None,
             connection_drag: None,
+            mode: InteractionMode::Default,
+            current_node_template_name: graph.node_templates.values().next().unwrap().name.clone(),
+            is_panning: false,
+            view_transform: ViewTransform {
+                pan_x: 0.0,
+                pan_y: 0.0,
+            },
         }
     }
+}
+pub enum InteractionMode {
+    Default,
+    Pan,
+    AddNode,
 }
 
 #[derive(Clone)]
@@ -66,20 +96,6 @@ pub struct ConnectionDragInfo {
     pub current_x: f64,
     pub current_y: f64,
 }
-
-// pub enum SelectedElement {
-//     Node(String),
-//     Slot {
-//         node_id: String,
-//         slot_id: String,
-//     },
-//     Connection {
-//         from_node: String,
-//         from_slot: String,
-//         to_node: String,
-//         to_slot: String,
-//     },
-// }
 
 pub struct ContextMenu {
     pub x: f64,
@@ -157,19 +173,36 @@ pub enum ContextMenuAction {
 }
 #[wasm_bindgen]
 impl GraphCanvas {
-    pub fn handle_mouse_down(&self, x: f64, y: f64) -> Result<(), JsValue> {
+    pub fn handle_mouse_down(&self, screen_x: f64, screen_y: f64) -> Result<(), JsValue> {
         let mut ix = self
             .interaction
             .lock()
             .map_err(|e| log_and_convert_error(e))?;
         let mut graph = self.graph.lock().map_err(|e| log_and_convert_error(e))?;
         let events = self.events.lock().map_err(|e| log_and_convert_error(e))?;
-        self.internal_handle_mouse_down(x, y, &mut graph, &mut ix, &events)
-            .map_err(|e| log_and_convert_error(e))?;
+
+        let (graph_x, graph_y) = ix.view_transform.screen_to_graph(screen_x, screen_y);
+        match ix.mode {
+            InteractionMode::Default => self
+                .internal_pointer_handle_mouse_down(graph_x, graph_y, &mut graph, &mut ix, &events)
+                .map_err(|e| log_and_convert_error(e))?,
+            InteractionMode::Pan => self
+                .internal_pan_handle_mouse_down(graph_x, graph_y, &mut graph, &mut ix, &events)
+                .map_err(|e| log_and_convert_error(e))?,
+            InteractionMode::AddNode => self
+                .internal_add_node_handle_mouse_down(graph_x, graph_y, &mut graph, &mut ix, &events)
+                .map_err(|e| log_and_convert_error(e))?,
+        }
         Ok(())
     }
 
-    pub fn handle_mouse_move(&self, x: f64, y: f64) -> Result<(), JsValue> {
+    pub fn handle_mouse_move(
+        &self,
+        screen_x: f64,
+        screen_y: f64,
+        dx: f64,
+        dy: f64,
+    ) -> Result<(), JsValue> {
         let mut ix = self
             .interaction
             .lock()
@@ -177,12 +210,29 @@ impl GraphCanvas {
         let mut graph = self.graph.lock().map_err(|e| log_and_convert_error(e))?;
         let events = self.events.lock().map_err(|e| log_and_convert_error(e))?;
 
-        self.internal_handle_mouse_move(x, y, &mut graph, &mut ix, &events)
-            .map_err(|e| log_and_convert_error(e))?;
+        let (graph_x, graph_y) = ix.view_transform.screen_to_graph(screen_x, screen_y);
+
+        match ix.mode {
+            InteractionMode::Default => self
+                .internal_pointer_handle_mouse_move(
+                    graph_x, graph_y, dx, dy, &mut graph, &mut ix, &events,
+                )
+                .map_err(|e| log_and_convert_error(e))?,
+            InteractionMode::Pan => self
+                .internal_pan_handle_mouse_move(
+                    graph_x, graph_y, dx, dy, &mut graph, &mut ix, &events,
+                )
+                .map_err(|e| log_and_convert_error(e))?,
+            InteractionMode::AddNode => self
+                .internal_add_node_handle_mouse_move(
+                    graph_x, graph_y, dx, dy, &mut graph, &mut ix, &events,
+                )
+                .map_err(|e| log_and_convert_error(e))?,
+        }
         Ok(())
     }
 
-    pub fn handle_mouse_up(&self, x: f64, y: f64) -> Result<(), JsValue> {
+    pub fn handle_mouse_up(&self, screen_x: f64, screen_y: f64) -> Result<(), JsValue> {
         let mut ix = self
             .interaction
             .lock()
@@ -190,8 +240,18 @@ impl GraphCanvas {
         let mut graph = self.graph.lock().map_err(|e| log_and_convert_error(e))?;
         let events = self.events.lock().map_err(|e| log_and_convert_error(e))?;
 
-        self.internal_handle_mouse_up(x, y, &mut graph, &mut ix, &events)
-            .map_err(|e| log_and_convert_error(e))?;
+        let (graph_x, graph_y) = ix.view_transform.screen_to_graph(screen_x, screen_y);
+        match ix.mode {
+            InteractionMode::Default => self
+                .internal_pointer_handle_mouse_up(graph_x, graph_y, &mut graph, &mut ix, &events)
+                .map_err(|e| log_and_convert_error(e))?,
+            InteractionMode::Pan => self
+                .internal_pan_handle_mouse_up(graph_x, graph_y, &mut graph, &mut ix, &events)
+                .map_err(|e| log_and_convert_error(e))?,
+            InteractionMode::AddNode => self
+                .internal_add_node_handle_mouse_up(graph_x, graph_y, &mut graph, &mut ix, &events)
+                .map_err(|e| log_and_convert_error(e))?,
+        }
         Ok(())
     }
 
@@ -247,7 +307,16 @@ impl GraphCanvas {
 }
 
 impl GraphCanvas {
-    fn internal_handle_mouse_down(
+    /// A helper method to set the interaction mode.
+    pub fn set_interaction_mode(&self, mode: InteractionMode) {
+        self.interaction.lock().unwrap().mode = mode;
+    }
+
+    /// Update the node template that should be added in AddNode mode.
+    pub fn set_current_node_template(&self, template: &str) {
+        self.interaction.lock().unwrap().current_node_template_name = template.to_string();
+    }
+    fn internal_pointer_handle_mouse_down(
         &self,
         x: f64,
         y: f64,
@@ -282,10 +351,12 @@ impl GraphCanvas {
         Ok(())
     }
 
-    fn internal_handle_mouse_move(
+    fn internal_pointer_handle_mouse_move(
         &self,
         x: f64,
         y: f64,
+        dx: f64,
+        dy: f64,
         graph: &mut Graph,
         ix: &mut InteractionState,
         events: &EventSystem,
@@ -343,7 +414,7 @@ impl GraphCanvas {
 
         Ok(())
     }
-    fn internal_handle_mouse_up(
+    fn internal_pointer_handle_mouse_up(
         &self,
         x: f64,
         y: f64,
@@ -532,6 +603,91 @@ impl GraphCanvas {
             events.emit(SystemEvent::ContextMenuClosed);
         }
 
+        Ok(())
+    }
+    fn internal_pan_handle_mouse_down(
+        &self,
+        x: f64,
+        y: f64,
+        graph: &mut Graph,
+        ix: &mut InteractionState,
+        events: &EventSystem,
+    ) -> GraphResult<()> {
+        ix.is_panning = true;
+        Ok(())
+    }
+    fn internal_pan_handle_mouse_move(
+        &self,
+        x: f64,
+        y: f64,
+        dx: f64,
+        dy: f64,
+        graph: &mut Graph,
+        ix: &mut InteractionState,
+        events: &EventSystem,
+    ) -> GraphResult<()> {
+        if ix.is_panning {
+            ix.view_transform.pan_x += dx;
+            ix.view_transform.pan_y += dy;
+        }
+        Ok(())
+    }
+    fn internal_pan_handle_mouse_up(
+        &self,
+        x: f64,
+        y: f64,
+        graph: &mut Graph,
+        ix: &mut InteractionState,
+        events: &EventSystem,
+    ) -> GraphResult<()> {
+        ix.is_panning = false;
+        Ok(())
+    }
+    fn internal_add_node_handle_mouse_down(
+        &self,
+        x: f64,
+        y: f64,
+        graph: &mut Graph,
+        ix: &mut InteractionState,
+        events: &EventSystem,
+    ) -> GraphResult<()> {
+        let template_id = graph
+            .get_node_template_by_name(&ix.current_node_template_name)
+            .ok_or(GraphError::TemplateNotFound(
+                ix.current_node_template_name.clone(),
+            ))?
+            .template_id;
+        graph.execute_command(
+            GraphCommand::CreateNode {
+                template_id: template_id,
+                x,
+                y,
+            },
+            events,
+        )?;
+        Ok(())
+    }
+    fn internal_add_node_handle_mouse_move(
+        &self,
+        x: f64,
+        y: f64,
+        dx: f64,
+        dy: f64,
+
+        graph: &mut Graph,
+        ix: &mut InteractionState,
+        events: &EventSystem,
+    ) -> GraphResult<()> {
+        Ok(())
+    }
+    fn internal_add_node_handle_mouse_up(
+        &self,
+        x: f64,
+        y: f64,
+        graph: &mut Graph,
+        ix: &mut InteractionState,
+        events: &EventSystem,
+    ) -> GraphResult<()> {
         Ok(())
     }
 }
