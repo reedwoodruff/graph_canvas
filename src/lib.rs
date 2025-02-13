@@ -55,41 +55,44 @@ impl GraphCanvas {
     #[wasm_bindgen(constructor)]
     pub fn new(container: &HtmlElement) -> Result<GraphCanvas, JsValue> {
         console_error_panic_hook::set_once();
-        // Set up the canvas
+
+        // Create canvas
         let document = window().unwrap().document().unwrap();
         let canvas = document
             .create_element("canvas")?
             .dyn_into::<HtmlCanvasElement>()?;
-        canvas.set_id("GraphCanvas");
+
+        // Set canvas style to fill container
+        canvas.style().set_property("width", "100%")?;
+        canvas.style().set_property("height", "100%")?;
+        canvas.style().set_property("display", "block")?;
+
+        // Add canvas to container
         container.append_child(&canvas)?;
-        let canvas_clone = canvas.clone();
 
-        let resize_closure = Closure::wrap(Box::new(move || {
-            let container = window()
-                .unwrap()
-                .document()
-                .unwrap()
-                .get_element_by_id("GraphCanvas")
-                .unwrap()
-                .parent_element()
-                .unwrap();
-            let width = container.client_width() as u32;
-            let height = container.client_height() as u32;
-            canvas_clone.set_width(width);
-            canvas_clone.set_height(height);
-        }) as Box<dyn FnMut()>);
+        // Create resize observer
+        let canvas_weak = canvas.clone();
+        let resize_callback = Closure::wrap(Box::new(move |_: js_sys::Array| {
+            let canvas = canvas_weak.clone();
+            let parent = canvas.parent_element().unwrap();
 
-        window()
-            .unwrap()
-            .add_event_listener_with_callback("resize", resize_closure.as_ref().unchecked_ref())?;
-        resize_closure.forget();
+            // Get parent's client dimensions
+            let width = parent.client_width();
+            let height = parent.client_height();
 
-        let canvas_clone = canvas.clone();
-        // Initial resize to set the canvas size
-        let width = container.client_width() as u32;
-        let height = container.client_height() as u32;
-        canvas_clone.set_width(width);
-        canvas_clone.set_height(height);
+            // Update canvas dimensions
+            canvas.set_width(width as u32);
+            canvas.set_height(height as u32);
+        }) as Box<dyn FnMut(js_sys::Array)>);
+
+        let observer = web_sys::ResizeObserver::new(resize_callback.as_ref().unchecked_ref())?;
+        observer.observe(container);
+
+        // Keep the closure alive
+        resize_callback.forget();
+
+        // Initial size
+        canvas.set_width(container.client_width() as u32);
 
         let mut graph = Graph::new();
 
@@ -190,6 +193,7 @@ impl GraphCanvas {
             log(&format!("{:?}", event));
         }));
 
+        let canvas_clone = canvas.clone();
         Ok(GraphCanvas {
             settings: Arc::new(GraphCanvasSettings {
                 context_menu_size: (400.0, 100.0),
