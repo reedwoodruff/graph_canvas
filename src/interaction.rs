@@ -25,6 +25,8 @@ impl<'a> DragStateResetter<'a> {
     pub fn reset_now(&mut self) {
         self.interaction_state.connection_drag = None;
         self.interaction_state.is_dragging_node = false;
+        self.interaction_state.click_initiated_on_node = None;
+        self.interaction_state.click_initiated_on_slot = None;
     }
 }
 
@@ -260,6 +262,7 @@ impl GraphCanvas {
             for slot in &node.slots {
                 if self.is_point_in_slot(x, y, node, slot, &graph) {
                     ix.click_initiated_on_slot = Some((node_id.clone(), slot.id.clone()));
+                    return Ok(());
                 }
             }
         }
@@ -275,6 +278,7 @@ impl GraphCanvas {
             }
         }
         ix.click_initiated_on_node = None;
+        ix.click_initiated_on_slot = None;
         Ok(())
     }
 
@@ -504,7 +508,7 @@ impl GraphCanvas {
                                             host_node_id: instance.instance_id.clone(),
                                             host_slot_id: slot.id.clone(),
                                             target_node_id: target_instance.instance_id.clone(),
-                                            target_slot_id: target_slot.id.clone(),
+                                            target_slot_id: "incoming".to_string(),
                                         });
                                     ix.context_menu = Some(ContextMenu {
                                         x,
@@ -522,6 +526,7 @@ impl GraphCanvas {
             }
         }
         ix.is_dragging_node = false;
+
         if ix.context_menu.is_some() {
             ix.context_menu = None;
             events.emit(SystemEvent::ContextMenuClosed);
