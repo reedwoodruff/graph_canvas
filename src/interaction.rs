@@ -466,9 +466,9 @@ impl GraphCanvas {
             // If context menu is open and the click was within the menu
             if let Some(menu) = &ix.context_menu {
                 if x >= menu.x
-                    && x <= menu.x + self.settings.context_menu_size.0
+                    && x <= menu.x + self.config.context_menu_size.0
                     && y >= menu.y
-                    && y <= menu.y + self.settings.context_menu_size.1
+                    && y <= menu.y + self.config.context_menu_size.1
                 {
                     // if the click was on a menu item, handle the action
                     for item in &menu.items {

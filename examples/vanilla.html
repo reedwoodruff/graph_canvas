@@ -19,9 +19,6 @@
         </style>
     </head>
     <body>
-        <!-- <div class="controls"> -->
-        <!-- <button id="add-node">Add Node</button> -->
-        <!-- </div> -->
         <div id="graph-container"></div>
 
         <script type="module">
@@ -31,22 +28,59 @@
                 await init();
 
                 const container = document.getElementById("graph-container");
-                const graph = new GraphCanvas(container);
-
-                // Start the render loop
-                graph.setup_events();
-                graph.start_render_loop();
-
-                // Add a test node when clicking the button
-                // document
-                //     .getElementById("add-node")
-                //     .addEventListener("click", () => {
-                //         // Add node at random position within container
-                //         const x = Math.random() * (container.clientWidth - 100);
-                //         const y =
-                //             Math.random() * (container.clientHeight - 100);
-                //         graph.add_node("test_node", x, y);
-                //     });
+                const config = {
+                    context_menu_size: [400, 100],
+                    node_templates: [
+                        {
+                            name: "Node",
+                            slot_templates: [
+                                {
+                                    name: "To Next",
+                                    position: "Right",
+                                    slot_type: "Outgoing",
+                                    allowed_connections: ["Node", "Test Node"],
+                                    min_connections: 1,
+                                    max_connections: 1,
+                                },
+                            ],
+                            default_width: 150,
+                            default_height: 100,
+                        },
+                        {
+                            name: "Node2",
+                            slot_templates: [
+                                {
+                                    name: "Hunky Dory",
+                                    position: "Top",
+                                    slot_type: "Outgoing",
+                                    allowed_connections: [
+                                        "Node",
+                                        "Test Node",
+                                        "Node2",
+                                    ],
+                                    min_connections: 3,
+                                    max_connections: 10000,
+                                },
+                                {
+                                    name: "On",
+                                    position: "Bottom",
+                                    allowed_connections: ["Node"],
+                                    slot_type: "Outgoing",
+                                },
+                            ],
+                        },
+                    ],
+                    initial_nodes: [
+                        {
+                            template_name: "Test Node",
+                            x: 100,
+                            y: 100,
+                            can_delete: false,
+                            can_move: true,
+                        },
+                    ],
+                };
+                const graph = new GraphCanvas(container, config);
             }
 
             main().catch(console.error);

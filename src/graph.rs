@@ -44,7 +44,7 @@ pub struct SlotTemplate {
     pub slot_type: SlotType,
     pub allowed_connections: Vec<String>, // template_ids that can connect here
     pub min_connections: usize,
-    pub max_connections: usize,
+    pub max_connections: Option<usize>,
 }
 
 // Instance definitions
@@ -57,6 +57,8 @@ pub struct NodeInstance {
     pub width: f64,
     pub height: f64,
     pub slots: Vec<SlotInstance>,
+    pub can_delete: bool,
+    pub can_move: bool,
 }
 
 impl NodeInstance {
@@ -88,6 +90,8 @@ impl NodeInstance {
             width: template.default_width,
             height: template.default_height,
             slots,
+            can_delete: true,
+            can_move: true,
         }
     }
     pub fn capabilities<'a>(&'a self, graph: &'a Graph) -> NodeCapabilities<'a> {
@@ -148,6 +152,11 @@ pub struct Connection {
 }
 
 #[derive(Debug, Clone, PartialEq)]
+#[cfg_attr(
+    feature = "js",
+    derive(serde::Serialize, serde::Deserialize, tsify::Tsify)
+)]
+#[cfg_attr(feature = "js", tsify(into_wasm_abi, from_wasm_abi))]
 pub enum SlotPosition {
     Left,
     Right,
@@ -156,6 +165,11 @@ pub enum SlotPosition {
 }
 
 #[derive(Debug, Clone, PartialEq)]
+#[cfg_attr(
+    feature = "js",
+    derive(serde::Serialize, serde::Deserialize, tsify::Tsify)
+)]
+#[cfg_attr(feature = "js", tsify(into_wasm_abi, from_wasm_abi))]
 pub enum SlotType {
     Incoming,
     Outgoing,
@@ -200,7 +214,7 @@ impl Graph {
             slot_type: SlotType::Incoming,
             allowed_connections: Vec::new(),
             min_connections: 0,
-            max_connections: 10000,
+            max_connections: None,
         });
         let template_with_incoming_slot = NodeTemplate {
             slot_templates: new_slots,
@@ -255,6 +269,8 @@ impl Graph {
             y,
             width: template.default_width,
             height: template.default_height,
+            can_move: true,
+            can_delete: true,
             slots: template
                 .slot_templates
                 .iter()
@@ -307,8 +323,9 @@ impl Graph {
         if from_slot_cap
             .template
             .allowed_connections
-            .contains(&target_node_cap.template.template_id)
-            && from_slot_cap.instance.connections.len() < from_slot_cap.template.max_connections
+            .contains(&target_node_cap.template.name)
+            && from_slot_cap.instance.connections.len()
+                < from_slot_cap.template.max_connections.unwrap_or(usize::MAX)
             && !from_slot_cap.instance.connections.iter().any(|connection| {
                 connection.target_node_id == target_node_id
                     && connection.target_slot_id == target_slot_id
@@ -370,7 +387,8 @@ impl Graph {
                     instance.slots.iter().zip(template.slot_templates.iter())
                 {
                     if slot.connections.len() < slot_template.min_connections
-                        || slot.connections.len() > slot_template.max_connections
+                        || slot.connections.len()
+                            > slot_template.max_connections.unwrap_or(usize::MAX)
                     {
                         return false;
                     }
@@ -447,10 +465,18 @@ impl Graph {
         )?;
         let instances_of_template = self.instances_of_node_template(&template.template_id);
 
-        if !template.can_delete
-            || template
-                .min_instances
-                .is_some_and(|min| instances_of_template.len() <= min)
+        if !template.can_delete {
+            return Err(GraphError::NodeDeletionFailed {
+                node_id: node_id.to_string(),
+                node_template_name: template.name.clone(),
+                reason: Box::new(GraphError::Other(
+                    "Cannot delete nodes of this template type".to_string(),
+                )),
+            });
+        }
+        if template
+            .min_instances
+            .is_some_and(|min| instances_of_template.len() <= min)
         {
             return Err(GraphError::NodeDeletionFailed {
                 node_id: node_id.to_string(),

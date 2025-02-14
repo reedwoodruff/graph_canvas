@@ -6,6 +6,7 @@ pub const SLOT_DRAW_RADIUS: f64 = 7.0;
 
 use crate::{
     common::get_bezier_control_points,
+    errors::GraphError,
     graph::{
         Graph, NodeInstance, NodeTemplateInfo, SlotInstance, SlotPosition, SlotTemplate, SlotType,
     },
@@ -18,9 +19,8 @@ use crate::{
 
 /// Rendering
 /// There should be no locks except in the main `do_render` method.
-#[wasm_bindgen]
 impl GraphCanvas {
-    pub fn start_render_loop(&self) -> Result<(), JsValue> {
+    pub fn start_render_loop(&self) -> Result<(), GraphError> {
         let f: Rc<RefCell<Option<Closure<dyn FnMut()>>>> = Rc::new(RefCell::new(None));
         let g = f.clone();
         let canvas = self.clone(); // Add Clone derive to GraphCanvas
@@ -38,7 +38,8 @@ impl GraphCanvas {
 
         window()
             .unwrap()
-            .request_animation_frame(g.borrow().as_ref().unwrap().as_ref().unchecked_ref())?;
+            .request_animation_frame(g.borrow().as_ref().unwrap().as_ref().unchecked_ref())
+            .map_err(|e| GraphError::SetupFailed(e))?;
         Ok(())
     }
 
@@ -121,12 +122,7 @@ impl GraphCanvas {
         context.set_fill_style_str("#ffffff");
         context.set_stroke_style_str("#000000");
         context.begin_path();
-        context.rect(
-            menu.x,
-            menu.y,
-            self.settings.context_menu_size.0,
-            menu_height,
-        );
+        context.rect(menu.x, menu.y, self.config.context_menu_size.0, menu_height);
         context.fill();
         context.stroke();
 
@@ -140,7 +136,7 @@ impl GraphCanvas {
         context.begin_path();
         context.move_to(menu.x, menu.y + TITLE_HEIGHT);
         context.line_to(
-            menu.x + self.settings.context_menu_size.0,
+            menu.x + self.config.context_menu_size.0,
             menu.y + TITLE_HEIGHT,
         );
         context.stroke();
@@ -154,7 +150,7 @@ impl GraphCanvas {
             item.bounds = Some(Rectangle {
                 x: menu.x,
                 y: y_pos,
-                width: self.settings.context_menu_size.0,
+                width: self.config.context_menu_size.0,
                 height: ITEM_HEIGHT,
             });
 
@@ -291,12 +287,12 @@ impl GraphCanvas {
         }
         context.close_path();
 
-        // Color based on slot type and connection status (same as before)
+        // Color based on slot type and connection status
         let fill_color = match (
             &slot_template.slot_type,
             slot_instance.connections.is_empty(),
             slot_instance.connections.len() < slot_template.min_connections,
-            slot_instance.connections.len() < slot_template.max_connections,
+            slot_instance.connections.len() < slot_template.max_connections.unwrap_or(usize::MAX),
         ) {
             (SlotType::Incoming, _, _, _) => "#fff",
             (_, true, true, true) => "red",

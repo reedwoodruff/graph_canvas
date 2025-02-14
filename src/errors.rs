@@ -6,6 +6,8 @@ use crate::{graph::Connection, group, groupEnd, log};
 
 #[derive(Debug, Clone)]
 pub enum GraphError {
+    SetupFailed(JsValue),
+    ConfigurationError(String, Box<GraphError>),
     NodeNotFound(String),
     SlotNotFound {
         node_id: String,
@@ -34,6 +36,10 @@ pub enum GraphError {
 impl fmt::Display for GraphError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            GraphError::ConfigurationError(msg, inner_error) => {
+                write!(f, "Configuration error: {}; {}", msg, inner_error)
+            }
+            GraphError::SetupFailed(err) => write!(f, "Setup failed: {:#?}", err),
             GraphError::NodeNotFound(id) => write!(f, "Node not found: {}", id),
             GraphError::SlotNotFound { node_id, slot_id } => {
                 write!(f, "Slot {} not found on node {}", slot_id, node_id)
