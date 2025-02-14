@@ -1,6 +1,7 @@
 use crate::{
     error,
     errors::{GraphError, GraphResult},
+    log,
 };
 use std::collections::HashMap;
 
@@ -19,6 +20,10 @@ pub struct NodeTemplate {
     pub template_id: String,
     pub name: String,
     pub slot_templates: Vec<SlotTemplate>,
+    pub max_instances: Option<usize>,
+    pub min_instances: Option<usize>,
+    pub can_delete: bool,
+    pub can_create: bool,
     // Visual defaults could go here
     pub default_width: f64,
     pub default_height: f64,
@@ -29,6 +34,7 @@ impl NodeTemplateInfo for NodeTemplate {
         self.slot_templates.iter().find(|st| st.id == slot_id)
     }
 }
+impl NodeTemplate {}
 
 #[derive(Debug, Clone)]
 pub struct SlotTemplate {
@@ -168,6 +174,23 @@ impl Graph {
         }
     }
 
+    pub fn node_template_can_add_instance(&self, node_template_id: &str) -> bool {
+        let instances_of_template = self.instances_of_node_template(node_template_id);
+        let template = self.node_templates.get(node_template_id).unwrap();
+        if let Some(max_instances) = template.max_instances {
+            return instances_of_template.len() < max_instances;
+        } else {
+            return true;
+        }
+    }
+    pub fn instances_of_node_template(&self, template_id: &str) -> Vec<String> {
+        self.node_instances
+            .iter()
+            .filter(|(_, instance)| instance.template_id == template_id)
+            .map(|(id, _)| id.clone())
+            .collect()
+    }
+
     pub fn register_template(&mut self, template: NodeTemplate) {
         let mut new_slots = template.slot_templates.clone();
         new_slots.push(SlotTemplate {
@@ -189,8 +212,40 @@ impl Graph {
         );
     }
 
-    pub fn create_instance(&mut self, node_template_id: &str, x: f64, y: f64) -> Option<String> {
-        let template = self.node_templates.get(node_template_id)?;
+    pub fn create_instance(
+        &mut self,
+        node_template_id: &str,
+        x: f64,
+        y: f64,
+    ) -> GraphResult<String> {
+        let template = {
+            let result = self.node_templates.get(node_template_id).ok_or(Err(
+                GraphError::NodeCreationFailed {
+                    node_template_id: node_template_id.to_string(),
+                    node_template_name: "?".to_string(),
+                    reason: Box::new(GraphError::TemplateNotFound(node_template_id.to_string())),
+                },
+            ));
+            match result {
+                Ok(template) => template,
+                Err(err) => return err,
+            }
+        };
+
+        if !self.node_template_can_add_instance(node_template_id) {
+            return Err(GraphError::NodeCreationFailed {
+                node_template_id: node_template_id.to_string(),
+                node_template_name: template.name.clone(),
+                reason: Box::new(GraphError::Other("Maximum instances reached".to_string())),
+            });
+        }
+        if !template.can_create {
+            return Err(GraphError::NodeCreationFailed {
+                node_template_id: node_template_id.to_string(),
+                node_template_name: template.name.clone(),
+                reason: Box::new(GraphError::Other("Template cannot be created".to_string())),
+            });
+        }
 
         let instance_id = generate_id();
         let instance = NodeInstance {
@@ -213,7 +268,7 @@ impl Graph {
         };
 
         self.node_instances.insert(instance_id.clone(), instance);
-        Some(instance_id)
+        Ok(instance_id)
     }
 
     pub fn get_node_capabilities(&self, instance_id: &str) -> Option<NodeCapabilities> {
@@ -371,6 +426,79 @@ impl Graph {
 
         Ok(())
     }
+
+    pub fn delete_node_instance(&mut self, node_id: &str) -> GraphResult<()> {
+        let instance = self
+            .node_instances
+            .get(node_id)
+            .ok_or(GraphError::NodeDeletionFailed {
+                reason: Box::new(GraphError::NodeNotFound(node_id.to_string())),
+                node_id: node_id.to_string(),
+                node_template_name: "?".to_string(),
+            })?;
+        let template = self.node_templates.get(&instance.template_id).ok_or(
+            GraphError::NodeDeletionFailed {
+                reason: Box::new(GraphError::TemplateNotFound(
+                    instance.template_id.to_string(),
+                )),
+                node_id: node_id.to_string(),
+                node_template_name: "?".to_string(),
+            },
+        )?;
+        let instances_of_template = self.instances_of_node_template(&template.template_id);
+
+        if !template.can_delete
+            || template
+                .min_instances
+                .is_some_and(|min| instances_of_template.len() <= min)
+        {
+            return Err(GraphError::NodeDeletionFailed {
+                node_id: node_id.to_string(),
+                node_template_name: template.name.clone(),
+                reason: Box::new(GraphError::Other("Minimum instances reached".to_string())),
+            });
+        }
+        // First remove all connections from this node
+        let connections_to_remove = self.get_node_connections(&node_id);
+        for conn in connections_to_remove {
+            self.delete_connection(&conn)?;
+        }
+        // Then remove all connections to this node
+        let connections_to_remove = self.node_instances.values().fold(vec![], |mut agg, inst| {
+            agg.append(&mut inst.slots.iter().fold(vec![], |mut agg, slot| {
+                agg.append(
+                    &mut slot
+                        .connections
+                        .iter()
+                        .filter(|conn| conn.target_node_id == node_id)
+                        .cloned()
+                        .collect::<Vec<_>>(),
+                );
+                agg
+            }));
+            agg
+        });
+        for conn in connections_to_remove {
+            self.delete_connection(&conn)?;
+        }
+
+        // Then remove the node
+        self.node_instances.remove(node_id);
+        Ok(())
+    }
+    pub fn delete_slot_connections(&mut self, node_id: &str, slot_id: &str) -> GraphResult<()> {
+        if let Some(instance) = self.node_instances.get_mut(node_id) {
+            if let Some(slot) = instance.slots.iter_mut().find(|s| s.id == slot_id) {
+                slot.connections.clear();
+                return Ok(());
+            }
+        }
+        Err(GraphError::SlotNotFound {
+            node_id: node_id.to_string(),
+            slot_id: slot_id.to_string(),
+        })
+    }
+
     pub fn get_node_template_by_name(&self, name: &str) -> Option<NodeTemplate> {
         self.node_templates
             .values()
@@ -395,75 +523,22 @@ impl Graph {
         events: &EventSystem,
     ) -> GraphResult<()> {
         let result = match command.clone() {
-            GraphCommand::DeleteNode(node_id) => {
-                // First remove all connections from this node
-                let connections_to_remove = self.get_node_connections(&node_id);
-                for conn in connections_to_remove {
-                    self.delete_connection(&conn)?;
-                }
-                // Then remove all connections to this node
-                let connections_to_remove =
-                    self.node_instances.values().fold(vec![], |mut agg, inst| {
-                        agg.append(&mut inst.slots.iter().fold(vec![], |mut agg, slot| {
-                            agg.append(
-                                &mut slot
-                                    .connections
-                                    .iter()
-                                    .filter(|conn| conn.target_node_id == node_id)
-                                    .cloned()
-                                    .collect::<Vec<_>>(),
-                            );
-                            agg
-                        }));
-                        agg
-                    });
-                for conn in connections_to_remove {
-                    self.delete_connection(&conn)?;
-                }
-
-                // Then remove the node
-                self.node_instances.remove(&node_id);
-                events.emit(SystemEvent::CommandExecuted(command));
-                Ok(())
-            }
-            GraphCommand::DeleteConnection(conn) => {
-                self.delete_connection(&conn)?;
-                events.emit(SystemEvent::CommandExecuted(command));
-                Ok(())
-            }
+            GraphCommand::DeleteNode(node_id) => self.delete_node_instance(&node_id),
+            GraphCommand::DeleteConnection(conn) => self.delete_connection(&conn),
             GraphCommand::DeleteSlotConnections { node_id, slot_id } => {
-                if let Some(instance) = self.node_instances.get_mut(&node_id) {
-                    if let Some(slot) = instance.slots.iter_mut().find(|s| s.id == slot_id) {
-                        slot.connections.clear();
-                        events.emit(SystemEvent::CommandExecuted(command));
-                        return Ok(());
-                    }
-                }
-                Err(GraphError::SlotNotFound {
-                    node_id: node_id.clone(),
-                    slot_id: slot_id.clone(),
-                })
+                self.delete_slot_connections(&node_id, &slot_id)
             }
-            GraphCommand::CreateConnection(connection) => {
-                self.connect_slots(connection, events)?;
-                events.emit(SystemEvent::CommandExecuted(command));
-                Ok(())
-            }
+            GraphCommand::CreateConnection(connection) => self.connect_slots(connection, events),
             GraphCommand::CreateNode { template_id, x, y } => {
-                let result = self.create_instance(&template_id, x, y);
-                match result {
-                    Some(node_id) => {
-                        events.emit(SystemEvent::CommandExecuted(command));
-                        Ok(())
-                    }
-                    None => Err(GraphError::NodeCreationFailed(template_id)),
-                }
+                self.create_instance(&template_id, x, y).map(|_| ())
             }
         };
         match &result {
-            Ok(_) => {}
+            Ok(_) => {
+                events.emit(SystemEvent::CommandExecuted(command));
+            }
             Err(e) => {
-                error(&format!("Command failed: {:#}", e));
+                log(&format!("{:#?}", e));
             }
         }
         result

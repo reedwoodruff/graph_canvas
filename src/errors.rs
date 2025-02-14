@@ -2,7 +2,7 @@ use core::fmt;
 
 use wasm_bindgen::JsValue;
 
-use crate::{graph::Connection, log};
+use crate::{graph::Connection, group, groupEnd, log};
 
 #[derive(Debug, Clone)]
 pub enum GraphError {
@@ -18,7 +18,17 @@ pub enum GraphError {
     },
     ValidationFailed(String),
     LockFailed(String),
-    NodeCreationFailed(String),
+    NodeCreationFailed {
+        node_template_id: String,
+        node_template_name: String,
+        reason: Box<GraphError>,
+    },
+    NodeDeletionFailed {
+        node_id: String,
+        node_template_name: String,
+        reason: Box<GraphError>,
+    },
+    Other(String),
 }
 
 impl fmt::Display for GraphError {
@@ -44,7 +54,43 @@ impl fmt::Display for GraphError {
             }
             GraphError::ValidationFailed(msg) => write!(f, "Validation failed: {}", msg),
             GraphError::LockFailed(msg) => write!(f, "Lock acquisition failed: {}", msg),
-            GraphError::NodeCreationFailed(id) => write!(f, "Node creation failed: {}", id),
+            GraphError::NodeCreationFailed {
+                node_template_id,
+                node_template_name,
+                reason,
+            } => {
+                group("Node Creation Failed");
+                log(&format!("Node Template ID: {}", node_template_id));
+
+                log(&format!("Template name: {}", node_template_name));
+                log(&format!("Reason: {}", reason));
+                groupEnd();
+                Ok(())
+                // write!(
+                //             f,
+                //             "Node creation failed: {}\n Template name: {}\n Reason: {:#?}",
+                //             node_id, node_template_name, reason
+                //         )
+            }
+            GraphError::NodeDeletionFailed {
+                node_id,
+                node_template_name,
+                reason,
+            } => {
+                group("Node Deletion Failed");
+                log(&format!("Node ID: {}", node_id));
+
+                log(&format!("Template name: {}", node_template_name));
+                log(&format!("Reason: {}", reason));
+                groupEnd();
+                Ok(())
+                // write!(
+                //             f,
+                //             "Node deletion failed: {}\n Template name: {}\n Reason: {:#?}",
+                //             node_id, node_template_name, reason
+                // )
+            }
+            GraphError::Other(msg) => write!(f, "Other error: {}", msg),
         }
     }
 }

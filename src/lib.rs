@@ -22,6 +22,10 @@ mod interaction;
 #[wasm_bindgen]
 extern "C" {
     #[wasm_bindgen(js_namespace = console)]
+    fn group(s: &str);
+    #[wasm_bindgen(js_namespace = console)]
+    fn groupEnd();
+    #[wasm_bindgen(js_namespace = console)]
     fn log(s: &str);
     #[wasm_bindgen(js_namespace = console)]
     fn error(s: &str);
@@ -161,6 +165,10 @@ impl GraphCanvas {
 
         // Register a test template
         let template = NodeTemplate {
+            min_instances: Some(1),
+            max_instances: None,
+            can_delete: true,
+            can_create: true,
             template_id: "test_node".to_string(),
             name: "Test Node".to_string(),
             slot_templates: vec![
