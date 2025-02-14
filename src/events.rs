@@ -37,6 +37,12 @@ pub struct EventSystem {
     listeners: Vec<EventListener>,
 }
 
+impl Default for EventSystem {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl EventSystem {
     pub fn new() -> Self {
         Self {

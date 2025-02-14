@@ -110,7 +110,7 @@ impl GraphCanvas {
         }));
 
         let (canvas, toolbar_container) =
-            GraphCanvas::create_canvas(container).map_err(|err| GraphError::SetupFailed(err))?;
+            GraphCanvas::create_canvas(container).map_err(GraphError::SetupFailed)?;
 
         // Create GraphCanvas...
         let canvas_clone = canvas.clone();
@@ -125,7 +125,7 @@ impl GraphCanvas {
         // Setup toolbar based on config
         // if config.show_default_toolbar {
         GraphCanvas::setup_default_toolbar(&toolbar_container, &config, &graph_canvas)
-            .map_err(|err| GraphError::SetupFailed(err))?;
+            .map_err(GraphError::SetupFailed)?;
         // }
         // if let Some(custom_toolbar) = &config.custom_toolbar {
         //     toolbar_container
@@ -232,7 +232,7 @@ impl GraphCanvas {
             .iter()
             .filter(|template| template.can_create)
             .collect::<Vec<_>>();
-        if creatable_templates.len() > 0 {
+        if !creatable_templates.is_empty() {
             graph_canvas.set_current_node_template(&creatable_templates.first().unwrap().name);
         }
         for template in creatable_templates.iter() {
@@ -487,13 +487,13 @@ impl GraphCanvas {
         // Add event listeners
         self.canvas
             .add_event_listener_with_callback("mousedown", mouse_down.as_ref().unchecked_ref())
-            .map_err(|e| GraphError::SetupFailed(e))?;
+            .map_err(GraphError::SetupFailed)?;
         self.canvas
             .add_event_listener_with_callback("mousemove", mouse_move.as_ref().unchecked_ref())
-            .map_err(|e| GraphError::SetupFailed(e))?;
+            .map_err(GraphError::SetupFailed)?;
         self.canvas
             .add_event_listener_with_callback("mouseup", mouse_up.as_ref().unchecked_ref())
-            .map_err(|e| GraphError::SetupFailed(e))?;
+            .map_err(GraphError::SetupFailed)?;
 
         // Prevent memory leaks
         mouse_down.forget();
@@ -504,7 +504,7 @@ impl GraphCanvas {
     }
 
     fn get_test_template() -> NodeTemplate {
-        let template = NodeTemplate {
+        NodeTemplate {
             min_instances: Some(1),
             max_instances: None,
             can_delete: true,
@@ -512,15 +512,6 @@ impl GraphCanvas {
             template_id: "test_node".to_string(),
             name: "Test Node".to_string(),
             slot_templates: vec![
-                // SlotTemplate {
-                //     id: "input".to_string(),
-                //     name: "Input".to_string(),
-                //     position: SlotPosition::Left,
-                //     slot_type: SlotType::Input,
-                //     allowed_connections: vec!["test_node".to_string()],
-                //     min_connections: 0,
-                //     max_connections: 1,
-                // },
                 SlotTemplate {
                     id: "first".to_string(),
                     name: "First".to_string(),
@@ -608,7 +599,6 @@ impl GraphCanvas {
             ],
             default_width: 150.0,
             default_height: 100.0,
-        };
-        template
+        }
     }
 }

@@ -30,7 +30,7 @@ impl<'a> DragStateResetter<'a> {
     }
 }
 
-impl<'a> Drop for DragStateResetter<'a> {
+impl Drop for DragStateResetter<'_> {
     fn drop(&mut self) {
         self.reset_now();
     }
@@ -178,21 +178,21 @@ impl GraphCanvas {
         let mut ix = self
             .interaction
             .lock()
-            .map_err(|e| log_and_convert_error(e))?;
-        let mut graph = self.graph.lock().map_err(|e| log_and_convert_error(e))?;
-        let events = self.events.lock().map_err(|e| log_and_convert_error(e))?;
+            .map_err(log_and_convert_error)?;
+        let mut graph = self.graph.lock().map_err(log_and_convert_error)?;
+        let events = self.events.lock().map_err(log_and_convert_error)?;
 
         let (graph_x, graph_y) = ix.view_transform.screen_to_graph(screen_x, screen_y);
         match ix.mode {
             InteractionMode::Default => self
                 .internal_pointer_handle_mouse_down(graph_x, graph_y, &mut graph, &mut ix, &events)
-                .map_err(|e| log_and_convert_error(e))?,
+                .map_err(log_and_convert_error)?,
             InteractionMode::Pan => self
                 .internal_pan_handle_mouse_down(graph_x, graph_y, &mut graph, &mut ix, &events)
-                .map_err(|e| log_and_convert_error(e))?,
+                .map_err(log_and_convert_error)?,
             InteractionMode::AddNode => self
                 .internal_add_node_handle_mouse_down(graph_x, graph_y, &mut graph, &mut ix, &events)
-                .map_err(|e| log_and_convert_error(e))?,
+                .map_err(log_and_convert_error)?,
         }
         Ok(())
     }
@@ -207,9 +207,9 @@ impl GraphCanvas {
         let mut ix = self
             .interaction
             .lock()
-            .map_err(|e| log_and_convert_error(e))?;
-        let mut graph = self.graph.lock().map_err(|e| log_and_convert_error(e))?;
-        let events = self.events.lock().map_err(|e| log_and_convert_error(e))?;
+            .map_err(log_and_convert_error)?;
+        let mut graph = self.graph.lock().map_err(log_and_convert_error)?;
+        let events = self.events.lock().map_err(log_and_convert_error)?;
 
         let (graph_x, graph_y) = ix.view_transform.screen_to_graph(screen_x, screen_y);
 
@@ -218,17 +218,17 @@ impl GraphCanvas {
                 .internal_pointer_handle_mouse_move(
                     graph_x, graph_y, dx, dy, &mut graph, &mut ix, &events,
                 )
-                .map_err(|e| log_and_convert_error(e))?,
+                .map_err(log_and_convert_error)?,
             InteractionMode::Pan => self
                 .internal_pan_handle_mouse_move(
                     graph_x, graph_y, dx, dy, &mut graph, &mut ix, &events,
                 )
-                .map_err(|e| log_and_convert_error(e))?,
+                .map_err(log_and_convert_error)?,
             InteractionMode::AddNode => self
                 .internal_add_node_handle_mouse_move(
                     graph_x, graph_y, dx, dy, &mut graph, &mut ix, &events,
                 )
-                .map_err(|e| log_and_convert_error(e))?,
+                .map_err(log_and_convert_error)?,
         }
         Ok(())
     }
@@ -237,21 +237,21 @@ impl GraphCanvas {
         let mut ix = self
             .interaction
             .lock()
-            .map_err(|e| log_and_convert_error(e))?;
-        let mut graph = self.graph.lock().map_err(|e| log_and_convert_error(e))?;
-        let events = self.events.lock().map_err(|e| log_and_convert_error(e))?;
+            .map_err(log_and_convert_error)?;
+        let mut graph = self.graph.lock().map_err(log_and_convert_error)?;
+        let events = self.events.lock().map_err(log_and_convert_error)?;
 
         let (graph_x, graph_y) = ix.view_transform.screen_to_graph(screen_x, screen_y);
         match ix.mode {
             InteractionMode::Default => self
                 .internal_pointer_handle_mouse_up(graph_x, graph_y, &mut graph, &mut ix, &events)
-                .map_err(|e| log_and_convert_error(e))?,
+                .map_err(log_and_convert_error)?,
             InteractionMode::Pan => self
                 .internal_pan_handle_mouse_up(graph_x, graph_y, &mut graph, &mut ix, &events)
-                .map_err(|e| log_and_convert_error(e))?,
+                .map_err(log_and_convert_error)?,
             InteractionMode::AddNode => self
                 .internal_add_node_handle_mouse_up(graph_x, graph_y, &mut graph, &mut ix, &events)
-                .map_err(|e| log_and_convert_error(e))?,
+                .map_err(log_and_convert_error)?,
         }
         Ok(())
     }
@@ -299,7 +299,7 @@ impl GraphCanvas {
         graph: &Graph,
     ) -> bool {
         let capa = slot.capabilities(graph);
-        let (slot_x, slot_y) = self.calculate_slot_position(&capa.template, node, graph);
+        let (slot_x, slot_y) = self.calculate_slot_position(capa.template, node, graph);
         let radius = SLOT_DRAW_RADIUS; // Same as drawing radius
 
         let dx = x - slot_x;
@@ -332,7 +332,7 @@ impl GraphCanvas {
         // Check if we clicked on a slot
         for (node_id, node) in &graph.node_instances {
             for slot in &node.slots {
-                if self.is_point_in_slot(x, y, node, slot, &graph) {
+                if self.is_point_in_slot(x, y, node, slot, graph) {
                     ix.click_initiated_on_slot = Some((node_id.clone(), slot.id.clone()));
                     return Ok(());
                 }
@@ -367,7 +367,7 @@ impl GraphCanvas {
         if ix.is_mouse_down
             && ix.click_initiated_on_node.is_some()
             && ix.connection_drag.is_none()
-            && ix.is_dragging_node == false
+            && !ix.is_dragging_node
         {
             if ix.context_menu.is_some() {
                 ix.context_menu = None;
@@ -448,7 +448,7 @@ impl GraphCanvas {
                                 target_node_id,
                                 target_slot_id: "incoming".to_string(),
                             },
-                            &events,
+                            events,
                         )?;
                     }
                 }
@@ -459,8 +459,8 @@ impl GraphCanvas {
             if let Some(moved_node) = &ix.click_initiated_on_node {
                 events.emit(SystemEvent::NodeMoved {
                     node: moved_node.clone(),
-                    x: x.clone(),
-                    y: y.clone(),
+                    x,
+                    y,
                 });
             }
             ix.is_dragging_node = false;
@@ -482,7 +482,7 @@ impl GraphCanvas {
                                     item.action.clone(),
                                     &menu.target_type,
                                     graph,
-                                    &events,
+                                    events,
                                 )?;
                                 // Close menu after action
                                 ix.context_menu = None;
@@ -501,7 +501,7 @@ impl GraphCanvas {
             for (instance_id, instance) in graph.node_instances.iter() {
                 // Check Slots
                 for slot in &instance.slots {
-                    if self.is_point_in_slot(x, y, instance, slot, &graph) {
+                    if self.is_point_in_slot(x, y, instance, slot, graph) {
                         let context_target = ContextMenuTarget::Slot {
                             node_id: instance_id.clone(),
                             slot_id: slot.id.clone(),
@@ -561,12 +561,12 @@ impl GraphCanvas {
                                     .find(|t| t.id == target_slot.slot_template_id)
                                     .unwrap();
                                 let (start_x, start_y) = self.calculate_slot_position(
-                                    &start_slot_template,
+                                    start_slot_template,
                                     instance,
                                     graph,
                                 );
                                 let (end_x, end_y) = self.calculate_slot_position(
-                                    &end_slot_template,
+                                    end_slot_template,
                                     target_instance,
                                     graph,
                                 );
@@ -666,7 +666,7 @@ impl GraphCanvas {
             .template_id;
         graph.execute_command(
             GraphCommand::CreateNode {
-                template_id: template_id,
+                template_id,
                 x,
                 y,
             },

@@ -37,7 +37,7 @@ impl GraphCanvas {
         window()
             .unwrap()
             .request_animation_frame(g.borrow().as_ref().unwrap().as_ref().unchecked_ref())
-            .map_err(|e| GraphError::SetupFailed(e))?;
+            .map_err(GraphError::SetupFailed)?;
         Ok(())
     }
 
@@ -178,9 +178,9 @@ impl GraphCanvas {
                     .iter()
                     .find(|s| s.id == *connection_drag.from_slot)
                 {
-                    let slot_template = slot.capabilities(&graph).template;
+                    let slot_template = slot.capabilities(graph).template;
                     let (start_x, start_y) =
-                        self.calculate_slot_position(&slot_template, node.instance, graph);
+                        self.calculate_slot_position(slot_template, node.instance, graph);
 
                     // Draw the in-progress connection
                     context.begin_path();
@@ -247,7 +247,7 @@ impl GraphCanvas {
         // let triangle_size = SLOT_DRAW_RADIUS * 1.5; // Make triangle slightly larger than circle hitbox
         let triangle_size = SLOT_DRAW_RADIUS;
 
-        let (x, y) = self.calculate_slot_position(&slot_template, node, graph);
+        let (x, y) = self.calculate_slot_position(slot_template, node, graph);
 
         // Draw circle if it is incoming
         context.begin_path();
@@ -387,8 +387,8 @@ impl GraphCanvas {
 
         // Calculate start and end points
         let (start_x, start_y) =
-            self.calculate_slot_position(&from_slot_template, from_node, graph);
-        let (end_x, end_y) = self.calculate_slot_position(&to_slot_template, to_node, graph);
+            self.calculate_slot_position(from_slot_template, from_node, graph);
+        let (end_x, end_y) = self.calculate_slot_position(to_slot_template, to_node, graph);
 
         // Draw curved connection line
         context.begin_path();

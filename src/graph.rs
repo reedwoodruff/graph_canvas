@@ -179,6 +179,12 @@ pub struct Graph {
     pub(crate) node_instances: HashMap<String, NodeInstance>,
 }
 
+impl Default for Graph {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl Graph {
     pub fn new() -> Self {
         Graph {
@@ -191,9 +197,9 @@ impl Graph {
         let instances_of_template = self.instances_of_node_template(node_template_id);
         let template = self.node_templates.get(node_template_id).unwrap();
         if let Some(max_instances) = template.max_instances {
-            return instances_of_template.len() < max_instances;
+            instances_of_template.len() < max_instances
         } else {
-            return true;
+            true
         }
     }
     pub fn instances_of_node_template(&self, template_id: &str) -> Vec<String> {
@@ -484,7 +490,7 @@ impl Graph {
             });
         }
         // First remove all connections from this node
-        let connections_to_remove = self.get_node_connections(&node_id);
+        let connections_to_remove = self.get_node_connections(node_id);
         for conn in connections_to_remove {
             self.delete_connection(&conn)?;
         }
