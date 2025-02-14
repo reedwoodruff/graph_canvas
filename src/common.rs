@@ -1,5 +1,4 @@
 use uuid::Uuid;
-use wasm_bindgen::prelude::*;
 
 use crate::graph::SlotPosition;
 pub fn generate_id() -> String {

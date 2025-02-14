@@ -1,5 +1,3 @@
-use web_sys::HtmlElement;
-
 use crate::graph::NodeTemplate;
 
 #[derive(Clone)]

@@ -2,10 +2,10 @@ use wasm_bindgen::prelude::*;
 
 use crate::{
     draw::SLOT_DRAW_RADIUS,
-    errors::{log_and_convert_error, GraphError, GraphResult, IntoJsError},
+    errors::{log_and_convert_error, GraphError, GraphResult},
     events::{EventSystem, SystemEvent},
     graph::{Connection, Graph, GraphCommand, NodeInstance, SlotInstance},
-    log, GraphCanvas,
+    GraphCanvas,
 };
 
 struct DragStateResetter<'a> {
@@ -58,6 +58,7 @@ impl ViewTransform {
         (x - self.pan_x, y - self.pan_y)
     }
 
+    #[allow(dead_code)]
     // Convert graph coordinates to screen coordinates
     pub fn graph_to_screen(&self, x: f64, y: f64) -> (f64, f64) {
         (x + self.pan_x, y + self.pan_y)
@@ -264,10 +265,11 @@ impl GraphCanvas {
     ) -> GraphResult<()> {
         match (action, target) {
             (ContextMenuAction::Delete, ContextMenuTarget::Node(node_id)) => {
-                graph.execute_command(GraphCommand::DeleteNode(node_id.clone()), events);
+                graph.execute_command(GraphCommand::DeleteNode(node_id.clone()), events)?;
             }
             (ContextMenuAction::Delete, ContextMenuTarget::Connection(connection)) => {
-                graph.execute_command(GraphCommand::DeleteConnection(connection.clone()), events);
+                graph
+                    .execute_command(GraphCommand::DeleteConnection(connection.clone()), events)?;
             }
             (
                 ContextMenuAction::DeleteAllSlotConnections,
@@ -279,7 +281,7 @@ impl GraphCanvas {
                         slot_id: slot_id.clone(),
                     },
                     events,
-                );
+                )?;
             }
             _ => {
                 todo!();
@@ -306,6 +308,7 @@ impl GraphCanvas {
     }
 }
 
+#[allow(unused_variables)]
 impl GraphCanvas {
     /// A helper method to set the interaction mode.
     pub fn set_interaction_mode(&self, mode: InteractionMode) {
@@ -322,7 +325,7 @@ impl GraphCanvas {
         y: f64,
         graph: &mut Graph,
         ix: &mut InteractionState,
-        events: &EventSystem,
+        _events: &EventSystem,
     ) -> GraphResult<()> {
         ix.is_mouse_down = true;
 
@@ -355,8 +358,8 @@ impl GraphCanvas {
         &self,
         x: f64,
         y: f64,
-        dx: f64,
-        dy: f64,
+        _dx: f64,
+        _dy: f64,
         graph: &mut Graph,
         ix: &mut InteractionState,
         events: &EventSystem,

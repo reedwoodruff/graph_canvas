@@ -1,5 +1,4 @@
 use crate::{
-    error,
     errors::{GraphError, GraphResult},
     log,
 };

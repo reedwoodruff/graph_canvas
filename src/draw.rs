@@ -7,9 +7,7 @@ pub const SLOT_DRAW_RADIUS: f64 = 7.0;
 use crate::{
     common::get_bezier_control_points,
     errors::GraphError,
-    graph::{
-        Graph, NodeInstance, NodeTemplateInfo, SlotInstance, SlotPosition, SlotTemplate, SlotType,
-    },
+    graph::{Graph, NodeInstance, SlotInstance, SlotPosition, SlotTemplate, SlotType},
     interaction::{
         ContextMenu, ContextMenuAction, ContextMenuItem, ContextMenuTarget, InteractionState,
         Rectangle,
@@ -530,7 +528,7 @@ impl GraphCanvas {
         point: (f64, f64),
         start: (f64, f64),
         end: (f64, f64),
-        control_distance: f64,
+        _control_distance: f64,
         from_position: &SlotPosition,
         to_position: &SlotPosition,
     ) -> f64 {
