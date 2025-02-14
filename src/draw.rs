@@ -5,6 +5,7 @@ use web_sys::{window, CanvasRenderingContext2d};
 pub const SLOT_DRAW_RADIUS: f64 = 7.0;
 
 use crate::{
+    common::get_bezier_control_points,
     graph::{
         Graph, NodeInstance, NodeTemplateInfo, SlotInstance, SlotPosition, SlotTemplate, SlotType,
     },
@@ -400,23 +401,9 @@ impl GraphCanvas {
         context.move_to(start_x, start_y);
 
         // Calculate control points for curve
-        let control_distance = 50.0; // Distance of control points from endpoints
-        let (cp1_x, cp1_y, cp2_x, cp2_y) =
-            match (&from_slot_template.position, &to_slot_template.position) {
-                (SlotPosition::Right, SlotPosition::Left) => (
-                    start_x + control_distance,
-                    start_y,
-                    end_x - control_distance,
-                    end_y,
-                ),
-                // Add other cases as needed
-                _ => (
-                    start_x + control_distance,
-                    start_y,
-                    end_x - control_distance,
-                    end_y,
-                ),
-            };
+        let (cp1_x, cp1_y) =
+            get_bezier_control_points(start_x, start_y, &from_slot_template.position);
+        let (cp2_x, cp2_y) = get_bezier_control_points(end_x, end_y, &to_slot_template.position);
 
         context.bezier_curve_to(cp1_x, cp1_y, cp2_x, cp2_y, end_x, end_y);
         context.set_stroke_style_str("#666666");
@@ -548,9 +535,11 @@ impl GraphCanvas {
         start: (f64, f64),
         end: (f64, f64),
         control_distance: f64,
+        from_position: &SlotPosition,
+        to_position: &SlotPosition,
     ) -> f64 {
-        let (cp1_x, cp1_y) = (start.0 + control_distance, start.1);
-        let (cp2_x, cp2_y) = (end.0 - control_distance, end.1);
+        let (cp1_x, cp1_y) = get_bezier_control_points(start.0, start.1, from_position);
+        let (cp2_x, cp2_y) = get_bezier_control_points(end.0, end.1, to_position);
 
         // Sample points along the curve
         let samples = 50;

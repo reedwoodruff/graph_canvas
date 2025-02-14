@@ -541,27 +541,29 @@ impl GraphCanvas {
                                 .iter()
                                 .find(|s| s.slot_template_id == connection.target_slot_id)
                             {
+                                let start_node_template =
+                                    graph.node_templates.get(&instance.template_id).unwrap();
+                                let start_slot_template = start_node_template
+                                    .slot_templates
+                                    .iter()
+                                    .find(|t| t.id == slot.slot_template_id)
+                                    .unwrap();
+                                let end_node_template = graph
+                                    .node_templates
+                                    .get(&target_instance.template_id)
+                                    .unwrap();
+                                let end_slot_template = end_node_template
+                                    .slot_templates
+                                    .iter()
+                                    .find(|t| t.id == target_slot.slot_template_id)
+                                    .unwrap();
                                 let (start_x, start_y) = self.calculate_slot_position(
-                                    &graph
-                                        .node_templates
-                                        .get(&instance.template_id)
-                                        .unwrap()
-                                        .slot_templates
-                                        .iter()
-                                        .find(|t| t.id == slot.slot_template_id)
-                                        .unwrap(),
+                                    &start_slot_template,
                                     instance,
                                     graph,
                                 );
                                 let (end_x, end_y) = self.calculate_slot_position(
-                                    &graph
-                                        .node_templates
-                                        .get(&target_instance.template_id)
-                                        .unwrap()
-                                        .slot_templates
-                                        .iter()
-                                        .find(|t| t.id == target_slot.slot_template_id)
-                                        .unwrap(),
+                                    &end_slot_template,
                                     target_instance,
                                     graph,
                                 );
@@ -571,6 +573,8 @@ impl GraphCanvas {
                                     (start_x, start_y),
                                     (end_x, end_y),
                                     50.0, // control_distance, same as used in draw_connection
+                                    &start_slot_template.position,
+                                    &end_slot_template.position,
                                 );
 
                                 if distance < 5.0 {
