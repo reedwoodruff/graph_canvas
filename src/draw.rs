@@ -2,12 +2,10 @@ use std::{cell::RefCell, f64::consts::PI, rc::Rc};
 use wasm_bindgen::prelude::*;
 use web_sys::{window, CanvasRenderingContext2d};
 
-pub const SLOT_DRAW_RADIUS: f64 = 7.0;
-
 use crate::{
     common::get_bezier_control_points,
     errors::GraphError,
-    graph::{Graph, NodeInstance, SlotInstance, SlotPosition, SlotTemplate, SlotType},
+    graph::{Connection, Graph, NodeInstance, SlotInstance, SlotPosition, SlotTemplate, SlotType},
     interaction::{
         ContextMenu, ContextMenuAction, ContextMenuItem, ContextMenuTarget, InteractionState,
         Rectangle,
@@ -81,10 +79,10 @@ impl GraphCanvas {
             interaction.view_transform.pan_y,
         )?;
 
-        self.draw_connections(context, graph)?;
+        self.draw_connections(context, graph, interaction)?;
 
         for instance in graph.node_instances.values() {
-            self.draw_node(context, instance, graph)?;
+            self.draw_node(context, instance, graph, interaction)?;
         }
 
         // Draw context menu if it exists
@@ -176,7 +174,7 @@ impl GraphCanvas {
                     .instance
                     .slots
                     .iter()
-                    .find(|s| s.id == *connection_drag.from_slot)
+                    .find(|s| s.slot_template_id == *connection_drag.from_slot)
                 {
                     let slot_template = slot.capabilities(graph).template;
                     let (start_x, start_y) =
@@ -200,12 +198,38 @@ impl GraphCanvas {
         context: &CanvasRenderingContext2d,
         instance: &NodeInstance,
         graph: &Graph,
+        ix: &InteractionState,
     ) -> Result<(), JsValue> {
         // Get the template for this instance
         let template = match graph.node_templates.get(&instance.template_id) {
             Some(t) => t,
             None => return Ok(()), // Skip drawing if template not found
         };
+        // Hover effect
+        {
+            let is_hovered = ix.hovered_node.as_ref() == Some(&instance.instance_id);
+
+            // Draw node rectangle with hover effect
+            context.begin_path();
+            context.set_fill_style_str("#ffffff");
+            context.set_stroke_style_str("#000000");
+
+            if is_hovered {
+                // Add shadow effect when hovered
+                context.set_shadow_color("#666666");
+                context.set_shadow_blur(10.0);
+                context.set_shadow_offset_x(0.0);
+                context.set_shadow_offset_y(0.0);
+            }
+
+            context.rect(instance.x, instance.y, instance.width, instance.height);
+            context.fill();
+            context.stroke();
+
+            // Reset shadow
+            context.set_shadow_color("transparent");
+            context.set_shadow_blur(0.0);
+        }
 
         // Draw node rectangle
         context.begin_path();
@@ -216,20 +240,20 @@ impl GraphCanvas {
         context.stroke();
 
         // Draw node title
-        context.set_font("14px Arial");
+        context.set_font("16px Arial");
         context.set_text_align("center");
         context.set_fill_style_str("#000000");
         context.fill_text(
             &template.name,
             instance.x + instance.width / 2.0,
-            instance.y + 20.0,
+            instance.y + 25.0,
         )?;
 
         // Draw slots
         for (slot_instance, slot_template) in
             instance.slots.iter().zip(template.slot_templates.iter())
         {
-            self.draw_slot(context, slot_instance, slot_template, instance, graph)?;
+            self.draw_slot(context, slot_instance, slot_template, instance, graph, ix)?;
         }
 
         Ok(())
@@ -242,17 +266,34 @@ impl GraphCanvas {
         slot_template: &SlotTemplate,
         node: &NodeInstance,
         graph: &Graph,
+        ix: &InteractionState,
     ) -> Result<(), JsValue> {
+        // Hover effect
+        {
+            let is_hovered = ix.hovered_slot.as_ref()
+                == Some(&(
+                    node.instance_id.clone(),
+                    slot_instance.slot_template_id.clone(),
+                ));
+
+            if is_hovered {
+                // Add glow effect for hovered slots
+                context.set_shadow_color("#4444ff");
+                context.set_shadow_blur(8.0);
+                context.set_shadow_offset_x(0.0);
+                context.set_shadow_offset_y(0.0);
+            }
+        }
         // Triangle dimensions
         // let triangle_size = SLOT_DRAW_RADIUS * 1.5; // Make triangle slightly larger than circle hitbox
-        let triangle_size = SLOT_DRAW_RADIUS;
+        let triangle_size = self.config.slot_radius;
 
         let (x, y) = self.calculate_slot_position(slot_template, node, graph);
 
         // Draw circle if it is incoming
         context.begin_path();
         if slot_template.slot_type == SlotType::Incoming {
-            context.arc(x, y, SLOT_DRAW_RADIUS, 0.0, 2.0 * PI)?;
+            context.arc(x, y, self.config.slot_radius, 0.0, 2.0 * PI)?;
         } else {
             // Draw triangle based on position and type
             match &slot_template.position {
@@ -306,24 +347,37 @@ impl GraphCanvas {
         // Draw slot label
         context.set_font("12px Arial");
         context.set_fill_style_str("#000000");
+        let slot_radius = self.config.slot_radius;
         match slot_template.position {
             SlotPosition::Left => {
                 context.set_text_align("left");
-                context.fill_text(&slot_template.name, x + 10.0, y + 4.0)?;
+                context.fill_text(
+                    &slot_template.name,
+                    x + (slot_radius + 4.0),
+                    y + (slot_radius / 2.0),
+                )?;
             }
             SlotPosition::Right => {
                 context.set_text_align("right");
-                context.fill_text(&slot_template.name, x - 10.0, y + 4.0)?;
+                context.fill_text(
+                    &slot_template.name,
+                    x - (slot_radius + 4.0),
+                    y + (slot_radius / 2.0),
+                )?;
             }
             SlotPosition::Top => {
                 context.set_text_align("center");
-                context.fill_text(&slot_template.name, x, y + 20.0)?;
+                context.fill_text(&slot_template.name, x, y + (slot_radius + 12.0))?;
             }
             SlotPosition::Bottom => {
                 context.set_text_align("center");
-                context.fill_text(&slot_template.name, x, y - 10.0)?;
+                context.fill_text(&slot_template.name, x, y - (slot_radius + 4.0))?;
             }
         }
+
+        // Reset shadow
+        context.set_shadow_color("transparent");
+        context.set_shadow_blur(0.0);
 
         Ok(())
     }
@@ -332,6 +386,7 @@ impl GraphCanvas {
         &self,
         context: &CanvasRenderingContext2d,
         graph: &Graph,
+        ix: &InteractionState,
     ) -> Result<(), JsValue> {
         for instance in graph.node_instances.values() {
             for slot in &instance.slots {
@@ -342,7 +397,7 @@ impl GraphCanvas {
                         if let Some(target_slot) = target_instance
                             .slots
                             .iter()
-                            .find(|s| s.slot_template_id == connection.target_slot_id)
+                            .find(|s| s.slot_template_id == connection.target_slot_template_id)
                         {
                             self.draw_connection(
                                 context,
@@ -351,6 +406,7 @@ impl GraphCanvas {
                                 target_instance,
                                 target_slot,
                                 graph,
+                                ix,
                             )?;
                         }
                     }
@@ -368,7 +424,16 @@ impl GraphCanvas {
         to_node: &NodeInstance,
         to_slot: &SlotInstance,
         graph: &Graph,
+        ix: &InteractionState,
     ) -> Result<(), JsValue> {
+        let current_connection = Connection {
+            host_node_id: from_node.instance_id.clone(),
+            host_slot_template_id: from_slot.slot_template_id.clone(),
+            target_node_id: to_node.instance_id.clone(),
+            target_slot_template_id: to_slot.slot_template_id.clone(),
+        };
+        let is_hovered = ix.hovered_connection.as_ref() == Some(&current_connection);
+
         // Get templates
         let from_template = graph.node_templates.get(&from_node.template_id).unwrap();
         let to_template = graph.node_templates.get(&to_node.template_id).unwrap();
@@ -386,8 +451,7 @@ impl GraphCanvas {
             .unwrap();
 
         // Calculate start and end points
-        let (start_x, start_y) =
-            self.calculate_slot_position(from_slot_template, from_node, graph);
+        let (start_x, start_y) = self.calculate_slot_position(from_slot_template, from_node, graph);
         let (end_x, end_y) = self.calculate_slot_position(to_slot_template, to_node, graph);
 
         // Draw curved connection line
@@ -395,13 +459,28 @@ impl GraphCanvas {
         context.move_to(start_x, start_y);
 
         // Calculate control points for curve
-        let (cp1_x, cp1_y) =
-            get_bezier_control_points(start_x, start_y, &from_slot_template.position);
-        let (cp2_x, cp2_y) = get_bezier_control_points(end_x, end_y, &to_slot_template.position);
+        let (cp1_x, cp1_y) = get_bezier_control_points(
+            start_x,
+            start_y,
+            &from_slot_template.position,
+            self.config.connection_control_point_distance,
+        );
+        let (cp2_x, cp2_y) = get_bezier_control_points(
+            end_x,
+            end_y,
+            &to_slot_template.position,
+            self.config.connection_control_point_distance,
+        );
 
         context.bezier_curve_to(cp1_x, cp1_y, cp2_x, cp2_y, end_x, end_y);
         context.set_stroke_style_str("#666666");
-        context.set_line_width(2.0);
+        if is_hovered {
+            context.set_line_width(3.0);
+            context.set_stroke_style_str("#4444ff");
+        } else {
+            context.set_line_width(2.0);
+            context.set_stroke_style_str("#666666");
+        }
         context.stroke();
         context.set_line_width(1.0);
 
@@ -451,7 +530,7 @@ impl GraphCanvas {
                 SlotType::Incoming => 0.0,
                 SlotType::Outgoing => 1.0,
             },
-        } * SLOT_DRAW_RADIUS;
+        } * self.config.slot_radius;
 
         // Calculate position based on slot index and total slots
         match position {
@@ -528,12 +607,21 @@ impl GraphCanvas {
         point: (f64, f64),
         start: (f64, f64),
         end: (f64, f64),
-        _control_distance: f64,
         from_position: &SlotPosition,
         to_position: &SlotPosition,
     ) -> f64 {
-        let (cp1_x, cp1_y) = get_bezier_control_points(start.0, start.1, from_position);
-        let (cp2_x, cp2_y) = get_bezier_control_points(end.0, end.1, to_position);
+        let (cp1_x, cp1_y) = get_bezier_control_points(
+            start.0,
+            start.1,
+            from_position,
+            self.config.connection_control_point_distance,
+        );
+        let (cp2_x, cp2_y) = get_bezier_control_points(
+            end.0,
+            end.1,
+            to_position,
+            self.config.connection_control_point_distance,
+        );
 
         // Sample points along the curve
         let samples = 50;

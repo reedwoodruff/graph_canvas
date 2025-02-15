@@ -1,7 +1,6 @@
 use wasm_bindgen::prelude::*;
 
 use crate::{
-    draw::SLOT_DRAW_RADIUS,
     errors::{log_and_convert_error, GraphError, GraphResult},
     events::{EventSystem, SystemEvent},
     graph::{Connection, Graph, GraphCommand, NodeInstance, SlotInstance},
@@ -47,6 +46,9 @@ pub struct InteractionState {
     pub current_node_template_name: String,
     pub is_panning: bool,
     pub view_transform: ViewTransform,
+    pub hovered_node: Option<String>,
+    pub hovered_slot: Option<(String, String)>, // (node_id, slot_template_id)
+    pub hovered_connection: Option<Connection>,
 }
 pub struct ViewTransform {
     pub pan_x: f64,
@@ -81,6 +83,9 @@ impl InteractionState {
                 pan_x: 0.0,
                 pan_y: 0.0,
             },
+            hovered_node: None,
+            hovered_slot: None,
+            hovered_connection: None,
         }
     }
 }
@@ -109,7 +114,10 @@ pub enum ContextMenuTarget {
     Node(String),
     // from_node
     Connection(Connection),
-    Slot { node_id: String, slot_id: String },
+    Slot {
+        node_id: String,
+        slot_template_id: String,
+    },
 }
 impl ContextMenuTarget {
     pub fn get_title(&self, graph: &Graph) -> String {
@@ -126,9 +134,16 @@ impl ContextMenuTarget {
                 }
             }
             ContextMenuTarget::Connection { .. } => "Connection".to_string(),
-            ContextMenuTarget::Slot { node_id, slot_id } => {
+            ContextMenuTarget::Slot {
+                node_id,
+                slot_template_id,
+            } => {
                 if let Some(node) = graph.node_instances.get(node_id) {
-                    if let Some(slot) = node.slots.iter().find(|s| s.id == *slot_id) {
+                    if let Some(slot) = node
+                        .slots
+                        .iter()
+                        .find(|s| s.slot_template_id == *slot_template_id)
+                    {
                         if let Some(template) = graph.node_templates.get(&node.template_id) {
                             if let Some(slot_template) = template
                                 .slot_templates
@@ -175,10 +190,7 @@ pub enum ContextMenuAction {
 #[wasm_bindgen]
 impl GraphCanvas {
     pub fn handle_mouse_down(&self, screen_x: f64, screen_y: f64) -> Result<(), JsValue> {
-        let mut ix = self
-            .interaction
-            .lock()
-            .map_err(log_and_convert_error)?;
+        let mut ix = self.interaction.lock().map_err(log_and_convert_error)?;
         let mut graph = self.graph.lock().map_err(log_and_convert_error)?;
         let events = self.events.lock().map_err(log_and_convert_error)?;
 
@@ -204,10 +216,7 @@ impl GraphCanvas {
         dx: f64,
         dy: f64,
     ) -> Result<(), JsValue> {
-        let mut ix = self
-            .interaction
-            .lock()
-            .map_err(log_and_convert_error)?;
+        let mut ix = self.interaction.lock().map_err(log_and_convert_error)?;
         let mut graph = self.graph.lock().map_err(log_and_convert_error)?;
         let events = self.events.lock().map_err(log_and_convert_error)?;
 
@@ -234,10 +243,7 @@ impl GraphCanvas {
     }
 
     pub fn handle_mouse_up(&self, screen_x: f64, screen_y: f64) -> Result<(), JsValue> {
-        let mut ix = self
-            .interaction
-            .lock()
-            .map_err(log_and_convert_error)?;
+        let mut ix = self.interaction.lock().map_err(log_and_convert_error)?;
         let mut graph = self.graph.lock().map_err(log_and_convert_error)?;
         let events = self.events.lock().map_err(log_and_convert_error)?;
 
@@ -273,12 +279,15 @@ impl GraphCanvas {
             }
             (
                 ContextMenuAction::DeleteAllSlotConnections,
-                ContextMenuTarget::Slot { node_id, slot_id },
+                ContextMenuTarget::Slot {
+                    node_id,
+                    slot_template_id,
+                },
             ) => {
                 graph.execute_command(
                     GraphCommand::DeleteSlotConnections {
                         node_id: node_id.clone(),
-                        slot_id: slot_id.clone(),
+                        slot_template_id: slot_template_id.clone(),
                     },
                     events,
                 )?;
@@ -300,11 +309,72 @@ impl GraphCanvas {
     ) -> bool {
         let capa = slot.capabilities(graph);
         let (slot_x, slot_y) = self.calculate_slot_position(capa.template, node, graph);
-        let radius = SLOT_DRAW_RADIUS; // Same as drawing radius
+        let radius = self.config.slot_radius; // Same as drawing radius
 
         let dx = x - slot_x;
         let dy = y - slot_y;
         dx * dx + dy * dy <= radius * radius
+    }
+
+    fn is_point_on_connection(
+        &self,
+        graph: &Graph,
+        connection: &Connection,
+        x: f64,
+        y: f64,
+    ) -> GraphResult<bool> {
+        if let Some(host_instance) = graph.node_instances.get(&connection.host_node_id) {
+            if let Some(host_slot) = host_instance
+                .slots
+                .iter()
+                .find(|s| s.slot_template_id == connection.host_slot_template_id)
+            {
+                if let Some(target_instance) = graph.node_instances.get(&connection.target_node_id)
+                {
+                    if let Some(target_slot) = target_instance
+                        .slots
+                        .iter()
+                        .find(|s| s.slot_template_id == connection.target_slot_template_id)
+                    {
+                        let start_node_template = graph
+                            .node_templates
+                            .get(&host_instance.template_id)
+                            .unwrap();
+                        let start_slot_template = start_node_template
+                            .slot_templates
+                            .iter()
+                            .find(|t| t.id == host_slot.slot_template_id)
+                            .unwrap();
+                        let end_node_template = graph
+                            .node_templates
+                            .get(&target_instance.template_id)
+                            .unwrap();
+                        let end_slot_template = end_node_template
+                            .slot_templates
+                            .iter()
+                            .find(|t| t.id == target_slot.slot_template_id)
+                            .unwrap();
+                        let (start_x, start_y) =
+                            self.calculate_slot_position(start_slot_template, host_instance, graph);
+                        let (end_x, end_y) =
+                            self.calculate_slot_position(end_slot_template, target_instance, graph);
+
+                        let distance = self.distance_to_bezier_curve(
+                            (x, y),
+                            (start_x, start_y),
+                            (end_x, end_y),
+                            &start_slot_template.position,
+                            &end_slot_template.position,
+                        );
+
+                        if distance < 5.0 {
+                            return Ok(true);
+                        }
+                    }
+                }
+            }
+        }
+        Ok(false)
     }
 }
 
@@ -333,7 +403,8 @@ impl GraphCanvas {
         for (node_id, node) in &graph.node_instances {
             for slot in &node.slots {
                 if self.is_point_in_slot(x, y, node, slot, graph) {
-                    ix.click_initiated_on_slot = Some((node_id.clone(), slot.id.clone()));
+                    ix.click_initiated_on_slot =
+                        Some((node_id.clone(), slot.slot_template_id.clone()));
                     return Ok(());
                 }
             }
@@ -354,6 +425,53 @@ impl GraphCanvas {
         Ok(())
     }
 
+    fn internal_pointer_handle_mouse_move_hover(
+        &self,
+        x: f64,
+        y: f64,
+        graph: &mut Graph,
+        ix: &mut InteractionState,
+    ) -> GraphResult<()> {
+        // Reset hover states
+        ix.hovered_node = None;
+        ix.hovered_slot = None;
+        ix.hovered_connection = None;
+        // Check for hovering over slots
+        for (node_id, node) in &graph.node_instances {
+            for slot in &node.slots {
+                if self.is_point_in_slot(x, y, node, slot, graph) {
+                    ix.hovered_slot = Some((node_id.clone(), slot.slot_template_id.clone()));
+                    return Ok(());
+                }
+            }
+        }
+
+        // Check for hovering over nodes
+        for (id, instance) in &graph.node_instances {
+            if x >= instance.x
+                && x <= instance.x + instance.width
+                && y >= instance.y
+                && y <= instance.y + instance.height
+            {
+                ix.hovered_node = Some(id.clone());
+                return Ok(());
+            }
+        }
+        // Check for hovering over connections
+        for (node_id, node) in &graph.node_instances {
+            for slot in &node.slots {
+                for connection in &slot.connections {
+                    if self.is_point_on_connection(graph, connection, x, y)? {
+                        ix.hovered_connection = Some(connection.clone());
+                        return Ok(());
+                    }
+                }
+            }
+        }
+
+        Ok(())
+    }
+
     fn internal_pointer_handle_mouse_move(
         &self,
         x: f64,
@@ -364,6 +482,8 @@ impl GraphCanvas {
         ix: &mut InteractionState,
         events: &EventSystem,
     ) -> GraphResult<()> {
+        self.internal_pointer_handle_mouse_move_hover(x, y, graph, ix)?;
+
         if ix.is_mouse_down
             && ix.click_initiated_on_node.is_some()
             && ix.connection_drag.is_none()
@@ -381,24 +501,24 @@ impl GraphCanvas {
                 ix.context_menu = None;
                 events.emit(SystemEvent::ContextMenuClosed);
             }
-            let (node_id, slot_id) = ix.click_initiated_on_slot.clone().unwrap();
+            let (node_id, slot_template_id) = ix.click_initiated_on_slot.clone().unwrap();
             let slot = graph
                 .node_instances
                 .get(&node_id)
                 .unwrap()
                 .slots
                 .iter()
-                .find(|s| s.id == slot_id)
+                .find(|s| s.slot_template_id == slot_template_id)
                 .unwrap();
             ix.connection_drag = Some(ConnectionDragInfo {
                 from_node: node_id.clone(),
-                from_slot: slot_id,
+                from_slot: slot_template_id,
                 current_x: x,
                 current_y: y,
             });
             events.emit(SystemEvent::ConnectionStarted {
                 node: node_id.clone(),
-                slot: slot.id.clone(),
+                slot: slot.slot_template_id.clone(),
             });
         }
 
@@ -444,9 +564,9 @@ impl GraphCanvas {
                         resetter.graph.connect_slots(
                             Connection {
                                 host_node_id: connection_drag.from_node.clone(),
-                                host_slot_id: connection_drag.from_slot.clone(),
+                                host_slot_template_id: connection_drag.from_slot.clone(),
                                 target_node_id,
-                                target_slot_id: "incoming".to_string(),
+                                target_slot_template_id: "incoming".to_string(),
                             },
                             events,
                         )?;
@@ -504,7 +624,7 @@ impl GraphCanvas {
                     if self.is_point_in_slot(x, y, instance, slot, graph) {
                         let context_target = ContextMenuTarget::Slot {
                             node_id: instance_id.clone(),
-                            slot_id: slot.id.clone(),
+                            slot_template_id: slot.slot_template_id.clone(),
                         };
                         ix.context_menu = Some(ContextMenu {
                             x,
@@ -533,72 +653,28 @@ impl GraphCanvas {
                     events.emit(SystemEvent::ContextMenuOpened(context_target));
                     return Ok(());
                 }
-                // Check to see if the click was on a connection
-                for slot in &instance.slots {
-                    for connection in &slot.connections {
-                        if let Some(target_instance) =
-                            graph.node_instances.get(&connection.target_node_id)
-                        {
-                            if let Some(target_slot) = target_instance
-                                .slots
-                                .iter()
-                                .find(|s| s.slot_template_id == connection.target_slot_id)
-                            {
-                                let start_node_template =
-                                    graph.node_templates.get(&instance.template_id).unwrap();
-                                let start_slot_template = start_node_template
-                                    .slot_templates
-                                    .iter()
-                                    .find(|t| t.id == slot.slot_template_id)
-                                    .unwrap();
-                                let end_node_template = graph
-                                    .node_templates
-                                    .get(&target_instance.template_id)
-                                    .unwrap();
-                                let end_slot_template = end_node_template
-                                    .slot_templates
-                                    .iter()
-                                    .find(|t| t.id == target_slot.slot_template_id)
-                                    .unwrap();
-                                let (start_x, start_y) = self.calculate_slot_position(
-                                    start_slot_template,
-                                    instance,
-                                    graph,
-                                );
-                                let (end_x, end_y) = self.calculate_slot_position(
-                                    end_slot_template,
-                                    target_instance,
-                                    graph,
-                                );
-
-                                let distance = self.distance_to_bezier_curve(
-                                    (x, y),
-                                    (start_x, start_y),
-                                    (end_x, end_y),
-                                    50.0, // control_distance, same as used in draw_connection
-                                    &start_slot_template.position,
-                                    &end_slot_template.position,
-                                );
-
-                                if distance < 5.0 {
-                                    let context_target =
-                                        ContextMenuTarget::Connection(Connection {
-                                            host_node_id: instance.instance_id.clone(),
-                                            host_slot_id: slot.id.clone(),
-                                            target_node_id: target_instance.instance_id.clone(),
-                                            target_slot_id: "incoming".to_string(),
-                                        });
-                                    ix.context_menu = Some(ContextMenu {
-                                        x,
-                                        y,
-                                        target_type: context_target.clone(),
-                                        items: vec![],
-                                    });
-                                    events.emit(SystemEvent::ContextMenuOpened(context_target));
-                                    return Ok(());
-                                }
-                            }
-                        }
+            }
+        }
+        // Check to see if the click was on a connection
+        for (instance_id, instance) in graph.node_instances.iter() {
+            for slot in &instance.slots {
+                for connection in &slot.connections {
+                    if self.is_point_on_connection(graph, connection, x, y)? {
+                        // let context_target = ContextMenuTarget::Connection(Connection {
+                        //     host_node_id: instance.instance_id.clone(),
+                        //     host_slot_template_id: slot.id.clone(),
+                        //     target_node_id: connection.target_node_id.clone(),
+                        //     target_slot_template_id: "incoming".to_string(),
+                        // });
+                        let context_target = ContextMenuTarget::Connection(connection.clone());
+                        ix.context_menu = Some(ContextMenu {
+                            x,
+                            y,
+                            target_type: context_target.clone(),
+                            items: vec![],
+                        });
+                        events.emit(SystemEvent::ContextMenuOpened(context_target));
+                        return Ok(());
                     }
                 }
             }
@@ -664,14 +740,7 @@ impl GraphCanvas {
                 ix.current_node_template_name.clone(),
             ))?
             .template_id;
-        graph.execute_command(
-            GraphCommand::CreateNode {
-                template_id,
-                x,
-                y,
-            },
-            events,
-        )?;
+        graph.execute_command(GraphCommand::CreateNode { template_id, x, y }, events)?;
         Ok(())
     }
     fn internal_add_node_handle_mouse_move(

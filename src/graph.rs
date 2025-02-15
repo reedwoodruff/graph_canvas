@@ -66,7 +66,7 @@ impl NodeInstance {
             .slot_templates
             .iter()
             .map(|st| SlotInstance {
-                id: st.id.clone(),
+                node_instance_id: instance_id.clone(),
                 slot_template_id: st.id.clone(),
                 node_template_id: template.template_id.clone(),
                 connections: Vec::new(),
@@ -75,7 +75,7 @@ impl NodeInstance {
 
         // Add the standard incoming slot
         slots.push(SlotInstance {
-            id: "incoming".to_string(),
+            node_instance_id: instance_id.clone(),
             node_template_id: template.template_id.clone(),
             slot_template_id: "incoming".to_string(),
             connections: Vec::new(),
@@ -120,9 +120,10 @@ impl<'a> NodeCapabilities<'a> {
 
 #[derive(Debug, Clone)]
 pub struct SlotInstance {
-    pub id: String,
+    // pub id: String,
     pub slot_template_id: String,
     pub node_template_id: String,
+    pub node_instance_id: String,
     pub connections: Vec<Connection>,
 }
 impl SlotInstance {
@@ -142,12 +143,12 @@ pub struct SlotCapabilities<'a> {
     pub instance: &'a SlotInstance,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Connection {
     pub host_node_id: String,
-    pub host_slot_id: String,
+    pub host_slot_template_id: String,
     pub target_node_id: String,
-    pub target_slot_id: String,
+    pub target_slot_template_id: String,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -280,7 +281,7 @@ impl Graph {
                 .slot_templates
                 .iter()
                 .map(|slot_template| SlotInstance {
-                    id: generate_id(),
+                    node_instance_id: instance_id.clone(),
                     node_template_id: node_template_id.to_string(),
                     slot_template_id: slot_template.id.clone(),
                     connections: Vec::new(),
@@ -300,10 +301,13 @@ impl Graph {
     pub fn get_slot_capabilities(
         &self,
         node_instance_id: &str,
-        slot_id: &str,
+        slot_template_id: &str,
     ) -> Option<SlotCapabilities> {
         let instance = self.node_instances.get(node_instance_id)?;
-        let slot = instance.slots.iter().find(|s| s.id == slot_id)?;
+        let slot = instance
+            .slots
+            .iter()
+            .find(|s| s.slot_template_id == slot_template_id)?;
         let template = self.node_templates.get(&slot.node_template_id)?;
         let slot_template = template.get_slot_template(&slot.slot_template_id)?;
         Some(SlotCapabilities {
@@ -317,12 +321,12 @@ impl Graph {
 
         let Connection {
             host_node_id,
-            host_slot_id,
+            host_slot_template_id,
             target_node_id,
-            target_slot_id,
+            target_slot_template_id,
         } = connection;
         let from_slot_cap = self
-            .get_slot_capabilities(&host_node_id, &host_slot_id)
+            .get_slot_capabilities(&host_node_id, &host_slot_template_id)
             .unwrap();
         let target_node_cap = self.get_node_capabilities(&target_node_id).unwrap();
         if from_slot_cap
@@ -333,7 +337,7 @@ impl Graph {
                 < from_slot_cap.template.max_connections.unwrap_or(usize::MAX)
             && !from_slot_cap.instance.connections.iter().any(|connection| {
                 connection.target_node_id == target_node_id
-                    && connection.target_slot_id == target_slot_id
+                    && connection.target_slot_template_id == target_slot_template_id
             })
         {
             return true;
@@ -348,7 +352,7 @@ impl Graph {
     ) -> GraphResult<()> {
         let Connection {
             host_node_id,
-            host_slot_id,
+            host_slot_template_id,
             ..
         } = connection.clone();
         if !self.is_valid_connection(connection.clone()) {
@@ -363,7 +367,7 @@ impl Graph {
             if let Some(slot) = from_instance
                 .slots
                 .iter_mut()
-                .find(|s| s.id == host_slot_id)
+                .find(|s| s.slot_template_id == host_slot_template_id)
             {
                 slot.connections.push(connection.clone());
             }
@@ -419,18 +423,19 @@ impl Graph {
     pub fn delete_connection(&mut self, connection: &Connection) -> GraphResult<()> {
         let Connection {
             host_node_id,
-            host_slot_id,
+            host_slot_template_id,
             target_node_id,
-            target_slot_id,
+            target_slot_template_id,
         } = connection;
         if let Some(from_instance) = self.node_instances.get_mut(host_node_id) {
             if let Some(slot) = from_instance
                 .slots
                 .iter_mut()
-                .find(|s| s.id == *host_slot_id)
+                .find(|s| s.slot_template_id == *host_slot_template_id)
             {
                 slot.connections.retain(|c| {
-                    !(c.target_node_id == *target_node_id && c.target_slot_id == *target_slot_id)
+                    !(c.target_node_id == *target_node_id
+                        && c.target_slot_template_id == *target_slot_template_id)
                 });
             }
         }
@@ -439,10 +444,11 @@ impl Graph {
             if let Some(slot) = to_instance
                 .slots
                 .iter_mut()
-                .find(|s| s.id == *target_slot_id)
+                .find(|s| s.slot_template_id == *target_slot_template_id)
             {
                 slot.connections.retain(|c| {
-                    !(c.target_node_id == *host_node_id && c.target_slot_id == *host_slot_id)
+                    !(c.target_node_id == *host_node_id
+                        && c.target_slot_template_id == *host_slot_template_id)
                 });
             }
         }
@@ -517,16 +523,24 @@ impl Graph {
         self.node_instances.remove(node_id);
         Ok(())
     }
-    pub fn delete_slot_connections(&mut self, node_id: &str, slot_id: &str) -> GraphResult<()> {
+    pub fn delete_slot_connections(
+        &mut self,
+        node_id: &str,
+        slot_template_id: &str,
+    ) -> GraphResult<()> {
         if let Some(instance) = self.node_instances.get_mut(node_id) {
-            if let Some(slot) = instance.slots.iter_mut().find(|s| s.id == slot_id) {
+            if let Some(slot) = instance
+                .slots
+                .iter_mut()
+                .find(|s| s.slot_template_id == slot_template_id)
+            {
                 slot.connections.clear();
                 return Ok(());
             }
         }
         Err(GraphError::SlotNotFound {
             node_id: node_id.to_string(),
-            slot_id: slot_id.to_string(),
+            slot_id: slot_template_id.to_string(),
         })
     }
 
@@ -542,9 +556,16 @@ impl Graph {
 pub enum GraphCommand {
     DeleteNode(String),
     DeleteConnection(Connection),
-    DeleteSlotConnections { node_id: String, slot_id: String },
+    DeleteSlotConnections {
+        node_id: String,
+        slot_template_id: String,
+    },
     CreateConnection(Connection),
-    CreateNode { template_id: String, x: f64, y: f64 },
+    CreateNode {
+        template_id: String,
+        x: f64,
+        y: f64,
+    },
 }
 
 impl Graph {
@@ -556,9 +577,10 @@ impl Graph {
         let result = match command.clone() {
             GraphCommand::DeleteNode(node_id) => self.delete_node_instance(&node_id),
             GraphCommand::DeleteConnection(conn) => self.delete_connection(&conn),
-            GraphCommand::DeleteSlotConnections { node_id, slot_id } => {
-                self.delete_slot_connections(&node_id, &slot_id)
-            }
+            GraphCommand::DeleteSlotConnections {
+                node_id,
+                slot_template_id: slot_id,
+            } => self.delete_slot_connections(&node_id, &slot_id),
             GraphCommand::CreateConnection(connection) => self.connect_slots(connection, events),
             GraphCommand::CreateNode { template_id, x, y } => {
                 self.create_instance(&template_id, x, y).map(|_| ())

@@ -48,9 +48,9 @@ impl fmt::Display for GraphError {
             GraphError::InvalidConnection { connection, reason } => {
                 let Connection {
                     host_node_id,
-                    host_slot_id,
+                    host_slot_template_id: host_slot_id,
                     target_node_id,
-                    target_slot_id,
+                    target_slot_template_id: target_slot_id,
                 } = connection;
                 write!(
                     f,

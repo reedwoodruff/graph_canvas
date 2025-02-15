@@ -27,7 +27,7 @@ impl Default for GraphCanvasConfig {
             default_node_width: 150.0,
             default_node_height: 100.0,
             connection_control_point_distance: 75.0,
-            slot_radius: 7.0,
+            slot_radius: 12.0,
             node_templates: Vec::new(),
             initial_nodes: Vec::new(),
             show_default_toolbar: true,
