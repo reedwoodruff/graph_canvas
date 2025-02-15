@@ -1,4 +1,3 @@
-use config::GraphCanvasConfig;
 use errors::{GraphError, GraphResult, IntoJsError};
 use graph::{Graph, NodeTemplate, SlotPosition, SlotTemplate, SlotType};
 use interaction::{InteractionMode, InteractionState};
@@ -17,6 +16,12 @@ mod interaction;
 #[cfg(feature = "js")]
 mod js;
 mod layout;
+pub mod prelude;
+
+pub use config::GraphCanvasConfig;
+pub use config::InitialNode;
+pub use graph::NodeTemplate;
+pub use graph::SlotTemplate;
 
 #[wasm_bindgen]
 extern "C" {
@@ -497,7 +502,7 @@ impl GraphCanvas {
         Ok(())
     }
 
-    pub fn setup_events(&self) -> Result<(), GraphError> {
+    fn setup_events(&self) -> Result<(), GraphError> {
         // Mouse Down Handler
         let self_clone = self.clone();
         let canvas_clone = self.canvas.clone();

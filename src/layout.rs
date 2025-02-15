@@ -2,7 +2,7 @@ use std::collections::HashMap;
 
 use web_sys::HtmlCanvasElement;
 
-use crate::{graph::Graph, interaction::InteractionState, log};
+use crate::{graph::Graph, interaction::InteractionState};
 
 #[derive(Clone, Debug)]
 pub struct NodePosition {

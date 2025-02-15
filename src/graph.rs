@@ -138,6 +138,7 @@ impl SlotInstance {
         }
     }
 }
+#[derive(Debug, Clone)]
 pub struct SlotCapabilities<'a> {
     pub template: &'a SlotTemplate,
     pub instance: &'a SlotInstance,
@@ -501,6 +502,13 @@ impl Graph {
             self.delete_connection(&conn)?;
         }
         // Then remove all connections to this node
+        self.remove_all_incoming_connections(node_id)?;
+
+        // Then remove the node
+        self.node_instances.remove(node_id);
+        Ok(())
+    }
+    pub fn remove_all_incoming_connections(&mut self, node_id: &str) -> GraphResult<()> {
         let connections_to_remove = self.node_instances.values().fold(vec![], |mut agg, inst| {
             agg.append(&mut inst.slots.iter().fold(vec![], |mut agg, slot| {
                 agg.append(
@@ -518,9 +526,6 @@ impl Graph {
         for conn in connections_to_remove {
             self.delete_connection(&conn)?;
         }
-
-        // Then remove the node
-        self.node_instances.remove(node_id);
         Ok(())
     }
     pub fn delete_slot_connections(
@@ -528,13 +533,26 @@ impl Graph {
         node_id: &str,
         slot_template_id: &str,
     ) -> GraphResult<()> {
+        let slot_type = self
+            .get_slot_capabilities(node_id, slot_template_id)
+            .ok_or(GraphError::SlotNotFound {
+                node_id: node_id.to_string(),
+                slot_id: slot_template_id.to_string(),
+            })?
+            .template
+            .slot_type
+            .clone();
         if let Some(instance) = self.node_instances.get_mut(node_id) {
             if let Some(slot) = instance
                 .slots
                 .iter_mut()
                 .find(|s| s.slot_template_id == slot_template_id)
             {
-                slot.connections.clear();
+                if slot_type == SlotType::Incoming {
+                    self.remove_all_incoming_connections(node_id)?;
+                } else {
+                    slot.connections.clear();
+                }
                 return Ok(());
             }
         }
