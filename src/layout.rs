@@ -1,8 +1,8 @@
-use std::collections::{HashMap, VecDeque};
+use std::collections::{HashMap, HashSet, VecDeque};
 
 use web_sys::HtmlCanvasElement;
 
-use crate::{graph::Graph, interaction::InteractionState};
+use crate::{graph::Graph, interaction::InteractionState, log};
 
 #[derive(Clone, Debug)]
 pub struct NodePosition {
@@ -104,10 +104,12 @@ impl LayoutEngine {
         let mut dependencies: HashMap<String, Vec<String>> = HashMap::new();
         let mut reverse_dependencies: HashMap<String, Vec<String>> = HashMap::new();
 
+        // Initialize dependencies
         graph.node_instances.keys().for_each(|id| {
             dependencies.insert(id.clone(), Vec::new());
             reverse_dependencies.insert(id.clone(), Vec::new());
         });
+
         // Build dependency graph
         for (_id, instance) in &graph.node_instances {
             for slot in &instance.slots {
@@ -124,40 +126,51 @@ impl LayoutEngine {
             }
         }
 
-        // Find root nodes (nodes with no incoming connections)
-        let root_nodes: Vec<String> = graph
-            .node_instances
-            .keys()
-            .filter(|id| reverse_dependencies[*id].is_empty())
-            .cloned()
-            .collect();
-
-        // Assign levels through BFS
+        // Simple level assignment: nodes with no incoming edges are level 0,
+        // then each node's level is one more than its minimum-level incoming node
         let mut levels: HashMap<String, usize> = HashMap::new();
-        let mut queue = VecDeque::new();
 
-        // Add root nodes to queue with level 0
-        for node in root_nodes {
-            queue.push_back((node, 0));
+        // First assign level 0 to nodes with no incoming edges
+        for (node_id, incoming) in &reverse_dependencies {
+            if incoming.is_empty() {
+                levels.insert(node_id.clone(), 0);
+            }
         }
 
-        // Process queue
-        while let Some((node_id, level)) = queue.pop_front() {
-            if !levels.contains_key(&node_id) {
-                levels.insert(node_id.clone(), level);
+        // If no root nodes found, assign level 0 to an arbitrary node
+        if levels.is_empty() && !graph.node_instances.is_empty() {
+            let start_node = graph.node_instances.keys().next().unwrap();
+            levels.insert(start_node.clone(), 0);
+        }
 
-                // Add children to queue
-                for child in &dependencies[&node_id] {
-                    queue.push_back((child.clone(), level + 1));
+        // Then make a fixed number of passes to assign levels to remaining nodes
+        let max_passes = graph.node_instances.len();
+        for _ in 0..max_passes {
+            let current_levels = levels.clone();
+
+            for node_id in graph.node_instances.keys() {
+                if !levels.contains_key(node_id) {
+                    // Check if any incoming nodes have levels assigned
+                    let incoming_levels: Vec<usize> = reverse_dependencies[node_id]
+                        .iter()
+                        .filter_map(|n| current_levels.get(n))
+                        .cloned()
+                        .collect();
+
+                    if !incoming_levels.is_empty() {
+                        // Assign this node's level as one more than the minimum incoming level
+                        levels.insert(node_id.clone(), incoming_levels.iter().min().unwrap() + 1);
+                    }
                 }
             }
         }
 
-        // Calculate positions based on levels
-        let level_spacing = 250.0; // Horizontal spacing between levels
-        let node_spacing = 150.0; // Vertical spacing between nodes
+        // Assign level 0 to any remaining nodes
+        for node_id in graph.node_instances.keys() {
+            levels.entry(node_id.clone()).or_insert(0);
+        }
 
-        // Group nodes by level
+        // Group nodes by level for positioning
         let mut nodes_by_level: HashMap<usize, Vec<String>> = HashMap::new();
         for (node_id, level) in &levels {
             nodes_by_level
@@ -166,12 +179,123 @@ impl LayoutEngine {
                 .push(node_id.clone());
         }
 
+        self.optimize_level_ordering(&mut nodes_by_level, &dependencies, &reverse_dependencies);
+        self.minimize_edge_crossings(&mut nodes_by_level, &dependencies);
+
+        // Position nodes
+        let level_spacing = 250.0;
+        let node_spacing = 150.0;
+
         // Canvas size offset
         let canvas_width_offset = self.canvas_ref.get_bounding_client_rect().width() / 10.0;
         let canvas_height_offset = self.canvas_ref.get_bounding_client_rect().height() / 2.0;
 
-        // Position nodes
         for (level, nodes) in &nodes_by_level {
+            let level_height = nodes.len() as f64 * node_spacing;
+            let start_y = -level_height / 2.0;
+
+            for (i, node_id) in nodes.iter().enumerate() {
+                positions.insert(
+                    node_id.clone(),
+                    NodePosition {
+                        x: canvas_width_offset + *level as f64 * level_spacing,
+                        y: canvas_height_offset + start_y + (i as f64 * node_spacing),
+                    },
+                );
+            }
+        }
+
+        LayoutSnapshot { positions }
+        // let mut positions = HashMap::new();
+
+        // let (dependencies, reverse_dependencies) = self.build_dependency_graph(graph);
+
+        // let mut levels = self.assign_initial_levels(graph, &dependencies, &reverse_dependencies);
+        // self.optimize_layer_assignment(&mut levels, &dependencies, &reverse_dependencies);
+
+        // let mut nodes_by_level = self.group_nodes_by_level(&levels);
+        // self.optimize_level_ordering(&mut nodes_by_level, &dependencies, &reverse_dependencies);
+        // self.minimize_edge_crossings(&mut nodes_by_level, &dependencies);
+
+        // // Initial positioning
+        // self.position_nodes(&mut positions, &mut nodes_by_level);
+
+        // // Final optimization
+        // self.fancy_optimize_node_spacing(&mut positions, &dependencies, (150.0, 100.0));
+
+        // LayoutSnapshot { positions }
+    }
+    fn build_dependency_graph(
+        &self,
+        graph: &Graph,
+    ) -> (HashMap<String, Vec<String>>, HashMap<String, Vec<String>>) {
+        // Create dependency graphs
+        let mut dependencies: HashMap<String, Vec<String>> = HashMap::new();
+        let mut reverse_dependencies: HashMap<String, Vec<String>> = HashMap::new();
+
+        // Initialize dependencies
+        graph.node_instances.keys().for_each(|id| {
+            dependencies.insert(id.clone(), Vec::new());
+            reverse_dependencies.insert(id.clone(), Vec::new());
+        });
+
+        // Build dependency graph and detect cycles
+        let mut visited = HashSet::new();
+        let mut in_current_path = HashSet::new();
+
+        // First, build the basic dependency graph
+        for (_id, instance) in &graph.node_instances {
+            for slot in &instance.slots {
+                for conn in &slot.connections {
+                    // Only add dependencies that don't create cycles
+                    if !would_create_cycle(
+                        &conn.host_node_id,
+                        &conn.target_node_id,
+                        &dependencies,
+                        &mut visited,
+                        &mut in_current_path,
+                    ) {
+                        dependencies
+                            .get_mut(&conn.host_node_id)
+                            .unwrap()
+                            .push(conn.target_node_id.clone());
+                        reverse_dependencies
+                            .get_mut(&conn.target_node_id)
+                            .unwrap()
+                            .push(conn.host_node_id.clone());
+                    }
+                }
+            }
+        }
+        (dependencies, reverse_dependencies)
+    }
+    fn group_nodes_by_level(&self, levels: &HashMap<String, usize>) -> HashMap<usize, Vec<String>> {
+        // Group nodes by level
+        let mut nodes_by_level: HashMap<usize, Vec<String>> = HashMap::new();
+        for (node_id, level) in levels {
+            nodes_by_level
+                .entry(*level)
+                .or_insert_with(Vec::new)
+                .push(node_id.clone());
+        }
+        nodes_by_level
+    }
+
+    // Calculate positions based on levels
+    fn position_nodes(
+        &self,
+        positions: &mut HashMap<String, NodePosition>,
+        nodes_by_level: &mut HashMap<usize, Vec<String>>,
+    ) {
+        log("Positioning nodes");
+        let level_spacing = 250.0; // Horizontal spacing between levels
+        let node_spacing = 150.0; // Vertical spacing between nodes
+                                  // Canvas size offset
+        let canvas_width_offset = self.canvas_ref.get_bounding_client_rect().width() / 10.0;
+        let canvas_height_offset = self.canvas_ref.get_bounding_client_rect().height() / 2.0;
+
+        // Position nodes
+        for (level, nodes) in nodes_by_level {
             let level_height = nodes.len() as f64 * node_spacing;
             let start_y = -level_height / 2.0;
 
@@ -185,8 +309,34 @@ impl LayoutEngine {
                 );
             }
         }
+    }
 
-        LayoutSnapshot { positions }
+    fn assign_initial_levels(
+        &self,
+        graph: &Graph,
+        dependencies: &HashMap<String, Vec<String>>,
+        reverse_dependencies: &HashMap<String, Vec<String>>,
+    ) -> HashMap<String, usize> {
+        log("Assigning initial levels");
+        // Find root nodes (nodes with no incoming connections)
+        // Assign levels using a modified approach that handles cycles
+        let mut levels: HashMap<String, usize> = HashMap::new();
+
+        // First pass: assign initial levels based on longest path from any root
+        let mut visited = HashSet::new();
+        for node_id in graph.node_instances.keys() {
+            if !visited.contains(node_id) {
+                assign_levels_dfs(
+                    node_id,
+                    0,
+                    &dependencies,
+                    &mut levels,
+                    &mut visited,
+                    &mut HashSet::new(),
+                );
+            }
+        }
+        levels
     }
 
     // Sort nodes within each level based on their connections
@@ -196,6 +346,7 @@ impl LayoutEngine {
         dependencies: &HashMap<String, Vec<String>>,
         reverse_dependencies: &HashMap<String, Vec<String>>,
     ) {
+        log("Optimizing layer assignment");
         for level_nodes in nodes_by_level.values_mut() {
             level_nodes.sort_by_cached_key(|node_id| {
                 // Calculate a "center of gravity" based on connected nodes' positions
@@ -217,6 +368,7 @@ impl LayoutEngine {
         nodes_by_level: &mut HashMap<usize, Vec<String>>,
         dependencies: &HashMap<String, Vec<String>>,
     ) {
+        log("Minimizing edge crossings");
         // Implement the Sugiyama algorithm's crossing minimization phase
         for level in 1..nodes_by_level.len() {
             let current_level = &nodes_by_level[&level];
@@ -255,6 +407,7 @@ impl LayoutEngine {
         dependencies: &HashMap<String, Vec<String>>,
         reverse_dependencies: &HashMap<String, Vec<String>>,
     ) {
+        log("Optimizing layer assignment");
         // Try to minimize the total edge length
         let mut changed = true;
         while changed {
@@ -296,6 +449,7 @@ impl LayoutEngine {
         dependencies: &HashMap<String, Vec<String>>,
         node_size: (f64, f64),
     ) {
+        log("Optimizing node spacing");
         let prev_positions = positions.clone(); // Store previous positions
 
         for (node_id, pos) in positions.iter_mut() {
@@ -339,7 +493,7 @@ impl LayoutEngine {
         node_size: (f64, f64),
     ) {
         let iterations = 5; // Number of refinement passes
-        let min_spacing = 20.0;
+        let min_spacing = node_size.0.max(node_size.1) * 1.5;
 
         for iteration in 0..iterations {
             let prev_positions = positions.clone();
@@ -430,4 +584,74 @@ fn count_crossings(
     }
 
     crossings
+}
+
+fn would_create_cycle(
+    from: &str,
+    to: &str,
+    dependencies: &HashMap<String, Vec<String>>,
+    visited: &mut HashSet<String>,
+    in_current_path: &mut HashSet<String>,
+) -> bool {
+    if to == from {
+        return true;
+    }
+
+    if !visited.insert(from.to_string()) {
+        return false;
+    }
+
+    in_current_path.insert(from.to_string());
+
+    if let Some(deps) = dependencies.get(to) {
+        for dep in deps {
+            if in_current_path.contains(dep)
+                || would_create_cycle(dep, from, dependencies, visited, in_current_path)
+            {
+                return true;
+            }
+        }
+    }
+
+    in_current_path.remove(from);
+    false
+}
+
+fn assign_levels_dfs(
+    node_id: &str,
+    current_level: usize,
+    dependencies: &HashMap<String, Vec<String>>,
+    levels: &mut HashMap<String, usize>,
+    visited: &mut HashSet<String>,
+    current_path: &mut HashSet<String>,
+) {
+    // If this node is already in our current path, we've found a cycle
+    if current_path.contains(node_id) {
+        return;
+    }
+
+    // Update level if this path gives us a higher level
+    let entry = levels.entry(node_id.to_string()).or_insert(current_level);
+    *entry = (*entry).max(current_level);
+
+    // Mark as visited and add to current path
+    visited.insert(node_id.to_string());
+    current_path.insert(node_id.to_string());
+
+    // Process children
+    if let Some(deps) = dependencies.get(node_id) {
+        for child in deps {
+            assign_levels_dfs(
+                child,
+                current_level + 1,
+                dependencies,
+                levels,
+                visited,
+                current_path,
+            );
+        }
+    }
+
+    // Remove from current path as we backtrack
+    current_path.remove(node_id);
 }
