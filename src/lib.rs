@@ -1,21 +1,11 @@
 use config::GraphCanvasConfig;
-use errors::GraphError;
-use errors::GraphResult;
-use errors::IntoJsError;
-use graph::Graph;
-use graph::NodeTemplate;
-use graph::SlotPosition;
-use graph::SlotTemplate;
-use graph::SlotType;
-use interaction::InteractionMode;
-use interaction::InteractionState;
-use std::sync::Arc;
-use std::sync::Mutex;
-use wasm_bindgen::prelude::*;
-use wasm_bindgen::JsCast;
-use web_sys::HtmlDivElement;
-use web_sys::HtmlElement;
-use web_sys::{window, HtmlCanvasElement};
+use errors::{GraphError, GraphResult, IntoJsError};
+use graph::{Graph, NodeTemplate, SlotPosition, SlotTemplate, SlotType};
+use interaction::{InteractionMode, InteractionState};
+use layout::{LayoutEngine, LayoutType};
+use std::sync::{Arc, Mutex};
+use wasm_bindgen::{prelude::*, JsCast};
+use web_sys::{window, HtmlCanvasElement, HtmlDivElement, HtmlElement};
 
 mod common;
 mod config;
@@ -26,6 +16,7 @@ mod graph;
 mod interaction;
 #[cfg(feature = "js")]
 mod js;
+mod layout;
 
 #[wasm_bindgen]
 extern "C" {
@@ -50,6 +41,7 @@ pub struct GraphCanvas {
     canvas: HtmlCanvasElement,
     interaction: Arc<Mutex<InteractionState>>,
     events: Arc<Mutex<events::EventSystem>>,
+    layout_engine: Arc<Mutex<LayoutEngine>>,
 }
 
 #[cfg(feature = "js")]
@@ -118,8 +110,9 @@ impl GraphCanvas {
             config: Arc::new(config.clone()),
             interaction: Arc::new(Mutex::new(InteractionState::new(&graph))),
             graph: Arc::new(Mutex::new(graph)),
-            canvas: canvas_clone,
+            canvas: canvas_clone.clone(),
             events,
+            layout_engine: Arc::new(Mutex::new(LayoutEngine::new(canvas_clone))),
         };
 
         // Setup toolbar based on config
@@ -442,6 +435,64 @@ impl GraphCanvas {
                 select_change.as_ref().unchecked_ref(),
             )?;
             select_change.forget();
+        }
+
+        // Add layout controls
+        let layout_controls = document.create_element("div")?;
+
+        // Add layout type selector
+        let layout_select = document.create_element("select")?;
+        layout_select.set_inner_html(
+            r#"
+            <option value="free">Free Layout</option>
+            <option value="hierarchical">Hierarchical Layout</option>
+        "#,
+        );
+
+        // Add reset button
+        let reset_layout_btn = document.create_element("button")?;
+        reset_layout_btn.set_inner_html("Reset Layout");
+
+        layout_controls.append_child(&layout_select)?;
+        layout_controls.append_child(&reset_layout_btn)?;
+        toolbar.append_child(&layout_controls)?;
+
+        // Add event handlers
+        {
+            let graph_canvas_clone = graph_canvas.clone();
+            let on_layout_change = Closure::wrap(Box::new(move |event: web_sys::Event| {
+                let target = event
+                    .target()
+                    .unwrap()
+                    .dyn_into::<web_sys::HtmlSelectElement>()
+                    .unwrap();
+                let layout_type = match target.value().as_str() {
+                    "hierarchical" => LayoutType::Hierarchical,
+                    _ => LayoutType::Free,
+                };
+
+                let mut layout_engine = graph_canvas_clone.layout_engine.lock().unwrap();
+                let mut graph = graph_canvas_clone.graph.lock().unwrap();
+                layout_engine.switch_layout(layout_type, &mut graph);
+            }) as Box<dyn FnMut(_)>);
+            layout_select.add_event_listener_with_callback(
+                "change",
+                on_layout_change.as_ref().unchecked_ref(),
+            )?;
+            on_layout_change.forget();
+        }
+
+        {
+            let graph_canvas_clone = graph_canvas.clone();
+            let on_reset = Closure::wrap(Box::new(move |_: web_sys::MouseEvent| {
+                let mut layout_engine = graph_canvas_clone.layout_engine.lock().unwrap();
+                let mut graph = graph_canvas_clone.graph.lock().unwrap();
+                let mut ix = graph_canvas_clone.interaction.lock().unwrap();
+                layout_engine.reset_current_layout(&mut graph, &mut ix);
+            }) as Box<dyn FnMut(_)>);
+            reset_layout_btn
+                .add_event_listener_with_callback("click", on_reset.as_ref().unchecked_ref())?;
+            on_reset.forget();
         }
         Ok(())
     }

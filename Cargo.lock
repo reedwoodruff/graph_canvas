@@ -74,6 +74,7 @@ dependencies = [
  "anyhow",
  "console_error_panic_hook",
  "js-sys",
+ "rand",
  "serde",
  "serde-wasm-bindgen",
  "strum",
