@@ -1,5 +1,5 @@
 use errors::{GraphError, GraphResult, IntoJsError};
-use graph::{Graph, NodeTemplate, SlotPosition, SlotTemplate, SlotType};
+use graph::Graph;
 use interaction::{InteractionMode, InteractionState};
 use layout::{LayoutEngine, LayoutType};
 use std::sync::{Arc, Mutex};
@@ -21,7 +21,17 @@ pub mod prelude;
 pub use config::GraphCanvasConfig;
 pub use config::InitialNode;
 pub use graph::NodeTemplate;
+pub use graph::SlotPosition;
 pub use graph::SlotTemplate;
+pub use graph::SlotType;
+#[cfg(feature = "js")]
+pub use js::JsPartialConfig;
+#[cfg(feature = "js")]
+pub use js::JsPartialInitialNode;
+#[cfg(feature = "js")]
+pub use js::JsPartialNodeTemplate;
+#[cfg(feature = "js")]
+pub use js::JsPartialSlotTemplate;
 
 #[wasm_bindgen]
 extern "C" {
@@ -49,15 +59,12 @@ pub struct GraphCanvas {
     layout_engine: Arc<Mutex<LayoutEngine>>,
 }
 
-#[cfg(feature = "js")]
-use crate::js::*;
-
 #[wasm_bindgen]
 impl GraphCanvas {
     #[cfg(feature = "js")]
     #[wasm_bindgen(constructor)]
     pub fn new_js(
-        container: &HtmlElement,
+        container: &HtmlDivElement,
         js_config: JsPartialConfig,
     ) -> Result<GraphCanvas, JsValue> {
         let config: GraphCanvasConfig = js_config.into();
@@ -69,7 +76,7 @@ impl GraphCanvas {
 }
 impl GraphCanvas {
     pub fn new_rust(
-        container: &HtmlElement,
+        container: &HtmlDivElement,
         config: GraphCanvasConfig,
         // user_toolbar_container: Option<HtmlElement>,
     ) -> GraphResult<GraphCanvas> {
@@ -113,7 +120,7 @@ impl GraphCanvas {
         let canvas_clone = canvas.clone();
         let graph_canvas = GraphCanvas {
             config: Arc::new(config.clone()),
-            interaction: Arc::new(Mutex::new(InteractionState::new(&graph))),
+            interaction: Arc::new(Mutex::new(InteractionState::new())),
             graph: Arc::new(Mutex::new(graph)),
             canvas: canvas_clone.clone(),
             events,
@@ -155,9 +162,13 @@ impl GraphCanvas {
         graph_container.set_id("graph_canvas_container");
         let graph_container = graph_container.dyn_into::<web_sys::HtmlDivElement>()?;
         graph_container.style().set_property("width", "100%")?;
+        graph_container.style().set_property("min-width", "400px")?;
         graph_container
             .style()
             .set_property("height", "calc(100% - 40px)")?;
+        graph_container
+            .style()
+            .set_property("min-height", "400px")?;
         graph_container.style().set_property("display", "block")?;
         graph_container.append_child(&canvas)?;
 

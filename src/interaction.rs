@@ -67,7 +67,7 @@ impl ViewTransform {
     }
 }
 impl InteractionState {
-    pub fn new(graph: &Graph) -> Self {
+    pub fn new() -> Self {
         Self {
             // selected_element: None,
             is_mouse_down: false,
@@ -77,7 +77,7 @@ impl InteractionState {
             context_menu: None,
             connection_drag: None,
             mode: InteractionMode::Default,
-            current_node_template_name: graph.node_templates.values().next().unwrap().name.clone(),
+            current_node_template_name: "Unset".to_string(),
             is_panning: false,
             view_transform: ViewTransform {
                 pan_x: 0.0,
@@ -397,6 +397,10 @@ impl GraphCanvas {
         ix: &mut InteractionState,
         _events: &EventSystem,
     ) -> GraphResult<()> {
+        if !self.config.is_mutable {
+            return Ok(());
+        }
+
         ix.is_mouse_down = true;
 
         // Check if we clicked on a slot
@@ -545,6 +549,9 @@ impl GraphCanvas {
         ix: &mut InteractionState,
         events: &EventSystem,
     ) -> GraphResult<()> {
+        if !self.config.is_mutable {
+            return Ok(());
+        }
         ix.is_mouse_down = false;
 
         // If we were creating a connection
@@ -696,6 +703,9 @@ impl GraphCanvas {
         ix: &mut InteractionState,
         events: &EventSystem,
     ) -> GraphResult<()> {
+        if !self.config.is_movable {
+            return Ok(());
+        }
         ix.is_panning = true;
         Ok(())
     }
@@ -723,6 +733,9 @@ impl GraphCanvas {
         ix: &mut InteractionState,
         events: &EventSystem,
     ) -> GraphResult<()> {
+        if !self.config.is_movable {
+            return Ok(());
+        }
         ix.is_panning = false;
         Ok(())
     }
@@ -734,6 +747,9 @@ impl GraphCanvas {
         ix: &mut InteractionState,
         events: &EventSystem,
     ) -> GraphResult<()> {
+        if !self.config.is_mutable {
+            return Ok(());
+        }
         let template_id = graph
             .get_node_template_by_name(&ix.current_node_template_name)
             .ok_or(GraphError::TemplateNotFound(

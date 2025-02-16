@@ -28,6 +28,10 @@ pub struct JsPartialConfig {
     pub snap_to_grid: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub grid_size: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub is_mutable: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub is_movable: Option<bool>,
 }
 
 impl From<JsPartialConfig> for GraphCanvasConfig {
@@ -65,21 +69,23 @@ impl From<JsPartialConfig> for GraphCanvasConfig {
                 .unwrap_or(default.show_default_toolbar),
             snap_to_grid: partial.snap_to_grid.unwrap_or(default.snap_to_grid),
             grid_size: partial.grid_size.unwrap_or(default.grid_size),
+            is_mutable: partial.is_mutable.unwrap_or(default.is_mutable),
+            is_movable: partial.is_movable.unwrap_or(default.is_movable),
         }
     }
 }
 
-#[derive(Serialize, Deserialize, Tsify)]
-#[tsify(into_wasm_abi, from_wasm_abi)]
-pub struct JsSlotTemplate {
-    pub id: String,
-    pub name: String,
-    pub position: String,  // "left" | "right" | "top" | "bottom"
-    pub slot_type: String, // "incoming" | "outgoing"
-    pub allowed_connections: Vec<String>,
-    pub min_connections: usize,
-    pub max_connections: Option<usize>,
-}
+// #[derive(Serialize, Deserialize, Tsify)]
+// #[tsify(into_wasm_abi, from_wasm_abi)]
+// pub struct JsSlotTemplate {
+//     pub id: String,
+//     pub name: String,
+//     pub position: String,  // "left" | "right" | "top" | "bottom"
+//     pub slot_type: String, // "incoming" | "outgoing"
+//     pub allowed_connections: Vec<String>,
+//     pub min_connections: usize,
+//     pub max_connections: Option<usize>,
+// }
 
 #[derive(Serialize, Deserialize, Tsify)]
 #[tsify(into_wasm_abi, from_wasm_abi)]
@@ -152,10 +158,12 @@ pub struct JsPartialNodeTemplate {
 pub struct JsPartialSlotTemplate {
     // Required fields
     pub name: String,
-    pub position: SlotPosition,
-    pub slot_type: SlotType,
 
     // Optional fields with defaults
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub slot_type: Option<SlotType>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub position: Option<SlotPosition>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub allowed_connections: Option<Vec<String>>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -183,35 +191,44 @@ pub struct JsPartialInitialNode {
 // Implement conversions with defaults
 impl From<JsPartialNodeTemplate> for NodeTemplate {
     fn from(partial: JsPartialNodeTemplate) -> Self {
+        let default = NodeTemplate::new(&partial.name);
+        let slot_templates = if let Some(partial_slot_templates) = partial.slot_templates {
+            partial_slot_templates.into_iter().map(Into::into).collect()
+        } else {
+            default.slot_templates
+        };
         Self {
-            template_id: generate_id(),
+            template_id: default.template_id,
             name: partial.name,
-            slot_templates: partial
-                .slot_templates
-                .unwrap_or_default()
-                .into_iter()
-                .map(Into::into)
-                .collect(),
-            min_instances: partial.min_instances.unwrap_or(None),
-            max_instances: partial.max_instances.unwrap_or(None),
-            can_delete: partial.can_delete.unwrap_or(true),
-            can_create: partial.can_create.unwrap_or(true),
-            default_width: partial.default_width.unwrap_or(150.0),
-            default_height: partial.default_height.unwrap_or(100.0),
+            slot_templates,
+            min_instances: partial.min_instances.unwrap_or(default.min_instances),
+            max_instances: partial.max_instances.unwrap_or(default.max_instances),
+            can_delete: partial.can_delete.unwrap_or(default.can_delete),
+            can_create: partial.can_create.unwrap_or(default.can_create),
+            default_width: partial.default_width.unwrap_or(default.default_width),
+            default_height: partial.default_height.unwrap_or(default.default_height),
         }
     }
 }
 
 impl From<JsPartialSlotTemplate> for SlotTemplate {
     fn from(partial: JsPartialSlotTemplate) -> Self {
+        let default = SlotTemplate::new(&partial.name);
+        let max_connections = if partial.max_connections.is_some() {
+            partial.max_connections
+        } else {
+            default.max_connections
+        };
         Self {
             id: generate_id(),
             name: partial.name,
-            position: partial.position,
-            slot_type: partial.slot_type,
-            allowed_connections: partial.allowed_connections.unwrap_or_default(),
-            min_connections: partial.min_connections.unwrap_or(0),
-            max_connections: partial.max_connections,
+            position: partial.position.unwrap_or(default.position),
+            slot_type: partial.slot_type.unwrap_or(default.slot_type),
+            allowed_connections: partial
+                .allowed_connections
+                .unwrap_or(default.allowed_connections),
+            min_connections: partial.min_connections.unwrap_or(default.min_connections),
+            max_connections,
         }
     }
 }

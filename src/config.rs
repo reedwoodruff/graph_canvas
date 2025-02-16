@@ -17,11 +17,12 @@ pub struct GraphCanvasConfig {
     pub show_default_toolbar: bool,
     pub snap_to_grid: bool,
     pub grid_size: f64,
+    pub is_mutable: bool,
+    pub is_movable: bool,
     // pub custom_toolbar: Option<HtmlElement>,
 }
-
-impl Default for GraphCanvasConfig {
-    fn default() -> Self {
+impl GraphCanvasConfig {
+    pub fn new() -> Self {
         Self {
             context_menu_size: (400.0, 100.0),
             default_node_width: 150.0,
@@ -33,8 +34,16 @@ impl Default for GraphCanvasConfig {
             show_default_toolbar: true,
             snap_to_grid: false,
             grid_size: 20.0,
+            is_mutable: true,
+            is_movable: true,
             // custom_toolbar: None,
         }
+    }
+}
+
+impl Default for GraphCanvasConfig {
+    fn default() -> Self {
+        Self::new()
     }
 }
 

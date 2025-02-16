@@ -27,6 +27,21 @@ pub struct NodeTemplate {
     pub default_width: f64,
     pub default_height: f64,
 }
+impl NodeTemplate {
+    pub fn new(name: &str) -> Self {
+        Self {
+            template_id: generate_id(),
+            name: name.to_string(),
+            slot_templates: vec![],
+            max_instances: None,
+            min_instances: None,
+            can_delete: true,
+            can_create: true,
+            default_width: 150.0,
+            default_height: 100.0,
+        }
+    }
+}
 
 impl NodeTemplateInfo for NodeTemplate {
     fn get_slot_template(&self, slot_id: &str) -> Option<&SlotTemplate> {
@@ -44,6 +59,19 @@ pub struct SlotTemplate {
     pub allowed_connections: Vec<String>, // template_ids that can connect here
     pub min_connections: usize,
     pub max_connections: Option<usize>,
+}
+impl SlotTemplate {
+    pub fn new(name: &str) -> Self {
+        Self {
+            id: generate_id(),
+            name: name.to_string(),
+            position: SlotPosition::Right,
+            slot_type: SlotType::Outgoing,
+            allowed_connections: vec![],
+            min_connections: 0,
+            max_connections: None,
+        }
+    }
 }
 
 // Instance definitions
