@@ -1,4 +1,6 @@
-use errors::{GraphError, GraphResult, IntoJsError};
+#[cfg(feature = "js")]
+use errors::IntoJsError;
+use errors::{GraphError, GraphResult};
 use graph::Graph;
 use interaction::{InteractionMode, InteractionState};
 use layout::{LayoutEngine, LayoutType};
@@ -20,10 +22,13 @@ pub mod prelude;
 
 pub use config::GraphCanvasConfig;
 pub use config::InitialNode;
+pub use graph::Connection;
 pub use graph::NodeTemplate;
 pub use graph::SlotPosition;
 pub use graph::SlotTemplate;
 pub use graph::SlotType;
+#[cfg(feature = "js")]
+pub use js::JsInitialConnection;
 #[cfg(feature = "js")]
 pub use js::JsPartialConfig;
 #[cfg(feature = "js")]
@@ -92,21 +97,6 @@ impl GraphCanvas {
         }
 
         // Create initial nodes
-        for node in &config.initial_nodes {
-            let template = graph.get_node_template_by_name(&node.template_name).ok_or(
-                GraphError::ConfigurationError(
-                    "Could not create initial node".to_string(),
-                    Box::new(GraphError::TemplateNotFound(node.template_name.clone())),
-                ),
-            )?;
-            let new_instance = graph.create_instance(&template.template_id, node.x, node.y)?;
-
-            // Update instance properties if needed
-            if let Some(instance) = graph.node_instances.get_mut(&new_instance) {
-                instance.can_delete = node.can_delete;
-                instance.can_move = node.can_move;
-            }
-        }
 
         let events = Arc::new(Mutex::new(events::EventSystem::new()));
         events.lock().unwrap().subscribe(Box::new(|event| {
@@ -572,6 +562,7 @@ impl GraphCanvas {
 
     fn get_test_template() -> NodeTemplate {
         NodeTemplate {
+            can_modify_slots: true,
             min_instances: Some(1),
             max_instances: None,
             can_delete: true,
@@ -587,6 +578,7 @@ impl GraphCanvas {
                     allowed_connections: vec!["test_node".to_string(), "Node".to_string()],
                     min_connections: 2,
                     max_connections: Some(3),
+                    can_modify_connections: true,
                 },
                 SlotTemplate {
                     id: "second".to_string(),
@@ -596,6 +588,7 @@ impl GraphCanvas {
                     allowed_connections: vec!["test_node".to_string(), "Node".to_string()],
                     min_connections: 2,
                     max_connections: Some(3),
+                    can_modify_connections: true,
                 },
                 SlotTemplate {
                     id: "third".to_string(),
@@ -607,6 +600,7 @@ impl GraphCanvas {
 
                     min_connections: 2,
                     max_connections: Some(3),
+                    can_modify_connections: true,
                 },
                 SlotTemplate {
                     id: "fourth".to_string(),
@@ -618,6 +612,7 @@ impl GraphCanvas {
 
                     min_connections: 2,
                     max_connections: Some(3),
+                    can_modify_connections: true,
                 },
                 SlotTemplate {
                     id: "fifth".to_string(),
@@ -629,6 +624,7 @@ impl GraphCanvas {
 
                     min_connections: 2,
                     max_connections: Some(3),
+                    can_modify_connections: true,
                 },
                 SlotTemplate {
                     id: "sixth".to_string(),
@@ -640,6 +636,7 @@ impl GraphCanvas {
 
                     min_connections: 2,
                     max_connections: Some(3),
+                    can_modify_connections: true,
                 },
                 SlotTemplate {
                     id: "seventh".to_string(),
@@ -651,6 +648,7 @@ impl GraphCanvas {
 
                     min_connections: 2,
                     max_connections: Some(3),
+                    can_modify_connections: true,
                 },
                 SlotTemplate {
                     id: "eigth".to_string(),
@@ -662,6 +660,7 @@ impl GraphCanvas {
 
                     min_connections: 2,
                     max_connections: Some(3),
+                    can_modify_connections: true,
                 },
             ],
             default_width: 150.0,

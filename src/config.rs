@@ -36,7 +36,6 @@ impl GraphCanvasConfig {
             grid_size: 20.0,
             is_mutable: true,
             is_movable: true,
-            // custom_toolbar: None,
         }
     }
 }
@@ -54,4 +53,24 @@ pub struct InitialNode {
     pub y: f64,
     pub can_delete: bool,
     pub can_move: bool,
+    pub initial_connections: Vec<InitialConnection>,
+}
+impl InitialNode {
+    pub fn new(template_name: String) -> Self {
+        Self {
+            template_name,
+            x: 10.0,
+            y: 10.0,
+            can_delete: true,
+            can_move: true,
+            initial_connections: vec![],
+        }
+    }
+}
+
+#[derive(Clone)]
+pub struct InitialConnection {
+    pub host_slot_name: String,
+    pub target_instance_id: String,
+    pub can_delete: bool,
 }

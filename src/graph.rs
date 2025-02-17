@@ -1,6 +1,6 @@
 use crate::{
     errors::{GraphError, GraphResult},
-    log,
+    log, InitialNode,
 };
 use std::collections::HashMap;
 
@@ -11,6 +11,7 @@ use crate::{
 
 pub trait NodeTemplateInfo {
     fn get_slot_template(&self, slot_id: &str) -> Option<&SlotTemplate>;
+    fn get_slot_template_by_name(&self, slot_name: &str) -> Option<&SlotTemplate>;
 }
 
 // Template definitions
@@ -23,6 +24,7 @@ pub struct NodeTemplate {
     pub min_instances: Option<usize>,
     pub can_delete: bool,
     pub can_create: bool,
+    pub can_modify_slots: bool,
     // Visual defaults could go here
     pub default_width: f64,
     pub default_height: f64,
@@ -39,6 +41,7 @@ impl NodeTemplate {
             can_create: true,
             default_width: 150.0,
             default_height: 100.0,
+            can_modify_slots: true,
         }
     }
 }
@@ -46,6 +49,9 @@ impl NodeTemplate {
 impl NodeTemplateInfo for NodeTemplate {
     fn get_slot_template(&self, slot_id: &str) -> Option<&SlotTemplate> {
         self.slot_templates.iter().find(|st| st.id == slot_id)
+    }
+    fn get_slot_template_by_name(&self, slot_name: &str) -> Option<&SlotTemplate> {
+        self.slot_templates.iter().find(|st| st.name == slot_name)
     }
 }
 impl NodeTemplate {}
@@ -59,6 +65,7 @@ pub struct SlotTemplate {
     pub allowed_connections: Vec<String>, // template_ids that can connect here
     pub min_connections: usize,
     pub max_connections: Option<usize>,
+    pub can_modify_connections: bool,
 }
 impl SlotTemplate {
     pub fn new(name: &str) -> Self {
@@ -70,6 +77,7 @@ impl SlotTemplate {
             allowed_connections: vec![],
             min_connections: 0,
             max_connections: None,
+            can_modify_connections: true,
         }
     }
 }
@@ -86,6 +94,7 @@ pub struct NodeInstance {
     pub slots: Vec<SlotInstance>,
     pub can_delete: bool,
     pub can_move: bool,
+    pub can_modify_connections: bool,
 }
 
 impl NodeInstance {
@@ -98,6 +107,7 @@ impl NodeInstance {
                 slot_template_id: st.id.clone(),
                 node_template_id: template.template_id.clone(),
                 connections: Vec::new(),
+                can_modify: true,
             })
             .collect::<Vec<_>>();
 
@@ -107,6 +117,7 @@ impl NodeInstance {
             node_template_id: template.template_id.clone(),
             slot_template_id: "incoming".to_string(),
             connections: Vec::new(),
+            can_modify: true,
         });
 
         Self {
@@ -119,6 +130,7 @@ impl NodeInstance {
             slots,
             can_delete: true,
             can_move: true,
+            can_modify_connections: true,
         }
     }
     pub fn capabilities<'a>(&'a self, graph: &'a Graph) -> NodeCapabilities<'a> {
@@ -139,6 +151,12 @@ impl NodeTemplateInfo for NodeCapabilities<'_> {
     fn get_slot_template(&self, slot_id: &str) -> Option<&SlotTemplate> {
         self.template.get_slot_template(slot_id)
     }
+    fn get_slot_template_by_name(&self, slot_name: &str) -> Option<&SlotTemplate> {
+        self.template
+            .slot_templates
+            .iter()
+            .find(|st| st.name == slot_name)
+    }
 }
 impl<'a> NodeCapabilities<'a> {
     pub fn new(template: &'a NodeTemplate, instance: &'a NodeInstance) -> Self {
@@ -153,6 +171,7 @@ pub struct SlotInstance {
     pub node_template_id: String,
     pub node_instance_id: String,
     pub connections: Vec<Connection>,
+    pub can_modify: bool,
 }
 impl SlotInstance {
     pub fn capabilities<'a>(&'a self, graph: &'a Graph) -> SlotCapabilities<'a> {
@@ -174,6 +193,7 @@ pub struct SlotCapabilities<'a> {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Connection {
+    pub can_delete: bool,
     pub host_node_id: String,
     pub host_slot_template_id: String,
     pub target_node_id: String,
@@ -250,6 +270,7 @@ impl Graph {
             allowed_connections: Vec::new(),
             min_connections: 0,
             max_connections: None,
+            can_modify_connections: true,
         });
         let template_with_incoming_slot = NodeTemplate {
             slot_templates: new_slots,
@@ -259,6 +280,84 @@ impl Graph {
             template_with_incoming_slot.template_id.clone(),
             template_with_incoming_slot,
         );
+    }
+
+    pub fn create_initial_nodes(&mut self, initial_nodes: &Vec<InitialNode>) -> GraphResult<()> {
+        // Set up nodes before making connections
+        let new_ids = initial_nodes
+            .iter()
+            .map(|node| {
+                let template = self.get_node_template_by_name(&node.template_name).ok_or(
+                    GraphError::ConfigurationError(
+                        "Could not create initial node".to_string(),
+                        Box::new(GraphError::TemplateNotFound(node.template_name.clone())),
+                    ),
+                )?;
+                let new_instance = self.create_instance(&template.template_id, node.x, node.y)?;
+
+                // Update instance properties if needed
+                if let Some(instance) = self.node_instances.get_mut(&new_instance) {
+                    instance.can_delete = node.can_delete;
+                    instance.can_move = node.can_move;
+                }
+                Ok::<(String, &InitialNode), GraphError>((new_instance, node))
+            })
+            .collect::<Vec<_>>();
+
+        let mut connection_errors = vec![];
+        // Make connections (not using `connect_slots` because we want to ignore mutability locks when setting up)
+        for item in new_ids {
+            if let Ok((host_node_id, node)) = item {
+                for initial_connection in &node.initial_connections {
+                    let host_node_caps = self
+                        .get_node_capabilities(&host_node_id)
+                        .expect("Just created node, should exist");
+                    let other_caps = self
+                        .get_node_capabilities(&initial_connection.target_instance_id)
+                        .ok_or(GraphError::NodeNotFound(
+                            initial_connection.target_instance_id.clone(),
+                        ));
+                    if other_caps.is_err() {
+                        connection_errors.push(other_caps.err().unwrap());
+                        break;
+                    }
+                    let other_caps = other_caps.unwrap();
+
+                    let host_node_slot = host_node_caps
+                        .get_slot_template_by_name(&initial_connection.host_slot_name);
+                    // host_node_caps.template.
+                    if host_node_slot.is_none() {
+                        connection_errors.push(GraphError::SlotNotFound {
+                            node_id: "na".to_string(),
+                            slot_id: initial_connection.host_slot_name.clone(),
+                        });
+                        break;
+                    }
+                    let host_node_slot_id = host_node_slot.unwrap().id.clone();
+                    let target_node_id = other_caps.instance.instance_id.clone();
+                    let target_slot_template_id = "Incoming".to_string();
+
+                    drop(host_node_caps);
+
+                    self.node_instances
+                        .get_mut(&host_node_id)
+                        .expect("Just created node, should exist")
+                        .slots
+                        .iter_mut()
+                        .find(|slot| slot.slot_template_id == host_node_slot_id)
+                        .expect("Just created, should exist")
+                        .connections
+                        .push(Connection {
+                            can_delete: initial_connection.can_delete,
+                            host_node_id: host_node_id.clone(),
+                            host_slot_template_id: host_node_slot_id,
+                            target_node_id,
+                            target_slot_template_id,
+                        })
+                }
+            }
+        }
+        Ok(())
     }
 
     pub fn create_instance(
@@ -306,6 +405,7 @@ impl Graph {
             height: template.default_height,
             can_move: true,
             can_delete: true,
+            can_modify_connections: true,
             slots: template
                 .slot_templates
                 .iter()
@@ -314,6 +414,7 @@ impl Graph {
                     node_template_id: node_template_id.to_string(),
                     slot_template_id: slot_template.id.clone(),
                     connections: Vec::new(),
+                    can_modify: true,
                 })
                 .collect(),
         };
@@ -344,7 +445,7 @@ impl Graph {
             instance: slot,
         })
     }
-    pub fn is_valid_connection(&self, connection: Connection) -> bool {
+    pub fn is_valid_connection(&self, connection: &Connection) -> GraphResult<()> {
         // Check if connection is valid based on templates
         // Implementation would check slot types, allowed connections, and current cardinality
 
@@ -353,25 +454,56 @@ impl Graph {
             host_slot_template_id,
             target_node_id,
             target_slot_template_id,
+            ..
         } = connection;
         let from_slot_cap = self
             .get_slot_capabilities(&host_node_id, &host_slot_template_id)
             .unwrap();
         let target_node_cap = self.get_node_capabilities(&target_node_id).unwrap();
-        if from_slot_cap
+        let connection_allowed = if from_slot_cap
             .template
             .allowed_connections
             .contains(&target_node_cap.template.name)
-            && from_slot_cap.instance.connections.len()
-                < from_slot_cap.template.max_connections.unwrap_or(usize::MAX)
-            && !from_slot_cap.instance.connections.iter().any(|connection| {
-                connection.target_node_id == target_node_id
-                    && connection.target_slot_template_id == target_slot_template_id
-            })
         {
-            return true;
+            Ok(())
+        } else {
+            Err("This slot type cannot connect to the attempted node template")
+        };
+        let max_len_reached = if from_slot_cap.instance.connections.len()
+            < from_slot_cap.template.max_connections.unwrap_or(usize::MAX)
+        {
+            Ok(())
+        } else {
+            Err("Slot's max length is reached")
+        };
+        let connection_already_exists =
+            if !from_slot_cap.instance.connections.iter().any(|connection| {
+                connection.target_node_id == *target_node_id
+                    && connection.target_slot_template_id == *target_slot_template_id
+            }) {
+                Ok(())
+            } else {
+                Err("Connection alrady exists")
+            };
+        if let Some(err) = max_len_reached.err() {
+            return Err(GraphError::InvalidConnection {
+                connection: connection.clone(),
+                reason: err.to_string(),
+            });
         }
-        false
+        if let Some(err) = connection_already_exists.err() {
+            return Err(GraphError::InvalidConnection {
+                connection: connection.clone(),
+                reason: err.to_string(),
+            });
+        }
+        if let Some(err) = connection_allowed.err() {
+            return Err(GraphError::InvalidConnection {
+                connection: connection.clone(),
+                reason: err.to_string(),
+            });
+        }
+        Ok(())
     }
 
     pub fn connect_slots(
@@ -384,10 +516,34 @@ impl Graph {
             host_slot_template_id,
             ..
         } = connection.clone();
-        if !self.is_valid_connection(connection.clone()) {
-            return Err(GraphError::InvalidConnection {
-                connection,
-                reason: "Connection Validation Failed".to_string(),
+        let node_caps = self
+            .get_node_capabilities(&host_node_id)
+            .expect("Node should exist");
+        let slot_template = node_caps
+            .get_slot_template(&host_slot_template_id)
+            .expect("Template should exist");
+
+        self.is_valid_connection(&connection).map_err(|err| {
+            GraphError::ConnectionCreationFailed {
+                node_template_name: node_caps.template.name.clone(),
+                slot_template_name: slot_template.name.clone(),
+                reason: Box::new(err),
+            }
+        })?;
+
+        self.check_node_modifiable_status(node_caps.instance)
+            .map_err(|err| GraphError::ConnectionCreationFailed {
+                node_template_name: node_caps.template.name.clone(),
+                slot_template_name: slot_template.name.clone(),
+                reason: Box::new(err),
+            })?;
+        if !slot_template.can_modify_connections {
+            return Err(GraphError::ConnectionCreationFailed {
+                node_template_name: node_caps.template.name.clone(),
+                slot_template_name: slot_template.name.clone(),
+                reason: Box::new(GraphError::SlotTemplateLocked {
+                    name: slot_template.name.clone(),
+                }),
             });
         }
 
@@ -436,6 +592,82 @@ impl Graph {
         }
         true
     }
+
+    fn check_slot_modifiable_status(&self, slot: &SlotInstance) -> GraphResult<()> {
+        let node_caps = self
+            .get_node_capabilities(&slot.node_instance_id)
+            .expect("Node should exist");
+        let slot = node_caps
+            .template
+            .get_slot_template(&slot.slot_template_id)
+            .expect("Slot should exist");
+        let slot_instance = node_caps
+            .instance
+            .slots
+            .iter()
+            .find(|slot| slot.slot_template_id == *slot.slot_template_id)
+            .expect("Slot should exist");
+        if !slot.can_modify_connections {
+            return Err(GraphError::SlotTemplateLocked {
+                name: slot.name.clone(),
+            });
+        }
+        if !slot_instance.can_modify {
+            return Err(GraphError::SlotInstanceLocked);
+        }
+
+        self.check_node_modifiable_status(node_caps.instance)?;
+        Ok(())
+    }
+
+    fn check_node_modifiable_status(&self, node: &NodeInstance) -> GraphResult<()> {
+        let node_caps = self
+            .get_node_capabilities(&node.instance_id)
+            .expect("Node should exist");
+        if !node_caps.template.can_modify_slots {
+            return Err(GraphError::NodeTemplateLocked {
+                name: node_caps.template.name.clone(),
+            });
+        }
+        if !node_caps.instance.can_modify_connections {
+            return Err(GraphError::NodeInstanceLocked);
+        }
+        Ok(())
+    }
+
+    fn check_connection_modifiable_status(&self, conn: &Connection) -> GraphResult<()> {
+        let Connection {
+            host_node_id,
+            host_slot_template_id,
+            ..
+        } = conn;
+        let node_caps = self
+            .get_node_capabilities(host_node_id)
+            .expect("Node should exist");
+        // let slot = node_caps
+        //     .template
+        //     .get_slot_template(host_slot_template_id)
+        //     .expect("Slot should exist");
+        let slot_instance = node_caps
+            .instance
+            .slots
+            .iter()
+            .find(|slot| slot.slot_template_id == *host_slot_template_id)
+            .expect("Slot should exist");
+        if !conn.can_delete {
+            return Err(GraphError::ConnectionDeletionFailed {
+                connection: conn.clone(),
+                reason: Box::new(GraphError::ConnectionLocked),
+            });
+        }
+        self.check_slot_modifiable_status(slot_instance)
+            .map_err(|err| GraphError::ConnectionDeletionFailed {
+                connection: conn.clone(),
+                reason: Box::new(err),
+            })?;
+
+        Ok(())
+    }
     pub fn get_node_connections(&self, node_id: &str) -> Vec<Connection> {
         self.node_instances
             .get(node_id)
@@ -455,7 +687,14 @@ impl Graph {
             host_slot_template_id,
             target_node_id,
             target_slot_template_id,
+            ..
         } = connection;
+        self.check_connection_modifiable_status(connection)
+            .map_err(|err| GraphError::ConnectionDeletionFailed {
+                connection: connection.clone(),
+                reason: Box::new(err),
+            })?;
+
         if let Some(from_instance) = self.node_instances.get_mut(host_node_id) {
             if let Some(slot) = from_instance
                 .slots
@@ -469,18 +708,18 @@ impl Graph {
             }
         }
 
-        if let Some(to_instance) = self.node_instances.get_mut(target_node_id) {
-            if let Some(slot) = to_instance
-                .slots
-                .iter_mut()
-                .find(|s| s.slot_template_id == *target_slot_template_id)
-            {
-                slot.connections.retain(|c| {
-                    !(c.target_node_id == *host_node_id
-                        && c.target_slot_template_id == *host_slot_template_id)
-                });
-            }
-        }
+        // if let Some(to_instance) = self.node_instances.get_mut(target_node_id) {
+        //     if let Some(slot) = to_instance
+        //         .slots
+        //         .iter_mut()
+        //         .find(|s| s.slot_template_id == *target_slot_template_id)
+        //     {
+        //         slot.connections.retain(|c| {
+        //             !(c.target_node_id == *host_node_id
+        //                 && c.target_slot_template_id == *host_slot_template_id)
+        //         });
+        //     }
+        // }
 
         Ok(())
     }
@@ -493,27 +732,27 @@ impl Graph {
                 reason: Box::new(GraphError::NodeNotFound(node_id.to_string())),
                 node_id: node_id.to_string(),
                 node_template_name: "?".to_string(),
-            })?;
-        let template = self.node_templates.get(&instance.template_id).ok_or(
-            GraphError::NodeDeletionFailed {
+            })?
+            .clone();
+        let template = self
+            .node_templates
+            .get(&instance.template_id)
+            .ok_or(GraphError::NodeDeletionFailed {
                 reason: Box::new(GraphError::TemplateNotFound(
                     instance.template_id.to_string(),
                 )),
                 node_id: node_id.to_string(),
                 node_template_name: "?".to_string(),
-            },
-        )?;
+            })?
+            .clone();
         let instances_of_template = self.instances_of_node_template(&template.template_id);
 
-        if !template.can_delete {
-            return Err(GraphError::NodeDeletionFailed {
+        self.check_node_modifiable_status(&instance)
+            .map_err(|err| GraphError::NodeDeletionFailed {
                 node_id: node_id.to_string(),
                 node_template_name: template.name.clone(),
-                reason: Box::new(GraphError::Other(
-                    "Cannot delete nodes of this template type".to_string(),
-                )),
-            });
-        }
+                reason: Box::new(err),
+            })?;
         if template
             .min_instances
             .is_some_and(|min| instances_of_template.len() <= min)
@@ -525,10 +764,29 @@ impl Graph {
             });
         }
         // First remove all connections from this node
-        let connections_to_remove = self.get_node_connections(node_id);
-        for conn in connections_to_remove {
-            self.delete_connection(&conn)?;
+        let slot_errors = instance
+            .slots
+            .iter()
+            .map(|slot_instance| {
+                self.delete_slot_connections(node_id, &slot_instance.slot_template_id)
+            })
+            .filter_map(|err| {
+                if err.is_err() {
+                    return Some(err.err().unwrap());
+                }
+                None
+            })
+            .collect::<Vec<_>>();
+        if !slot_errors.is_empty() {
+            return Err(GraphError::NodeDeletionFailed {
+                node_id: node_id.to_string(),
+                node_template_name: template.name.clone(),
+                reason: Box::new(GraphError::SomeConnectionDeletionsFailed {
+                    failures: slot_errors,
+                }),
+            });
         }
+
         // Then remove all connections to this node
         self.remove_all_incoming_connections(node_id)?;
 
@@ -551,8 +809,17 @@ impl Graph {
             }));
             agg
         });
-        for conn in connections_to_remove {
-            self.delete_connection(&conn)?;
+        let errs = connections_to_remove
+            .iter()
+            .map(|conn| self.delete_connection(&conn))
+            .fold(vec![], |mut agg, result| {
+                if result.is_err() {
+                    agg.push(result.err().unwrap());
+                }
+                agg
+            });
+        if !errs.is_empty() {
+            return Err(GraphError::SomeConnectionDeletionsFailed { failures: errs });
         }
         Ok(())
     }
@@ -561,25 +828,42 @@ impl Graph {
         node_id: &str,
         slot_template_id: &str,
     ) -> GraphResult<()> {
-        let slot_type = self
+        let caps = self
             .get_slot_capabilities(node_id, slot_template_id)
             .ok_or(GraphError::SlotNotFound {
                 node_id: node_id.to_string(),
                 slot_id: slot_template_id.to_string(),
-            })?
-            .template
-            .slot_type
-            .clone();
-        if let Some(instance) = self.node_instances.get_mut(node_id) {
+            })?;
+        let slot_type = caps.template.slot_type.clone();
+
+        self.check_slot_modifiable_status(caps.instance)
+            .map_err(|err| GraphError::SlotDeletionFailed {
+                slot_name: caps.template.name.clone(),
+                reason: Box::new(err),
+            })?;
+
+        if let Some(instance) = self.node_instances.get(node_id).cloned() {
             if let Some(slot) = instance
                 .slots
-                .iter_mut()
+                .iter()
                 .find(|s| s.slot_template_id == slot_template_id)
             {
                 if slot_type == SlotType::Incoming {
                     self.remove_all_incoming_connections(node_id)?;
                 } else {
-                    slot.connections.clear();
+                    let errs = slot
+                        .connections
+                        .iter()
+                        .map(|conn| self.delete_connection(&conn))
+                        .fold(vec![], |mut agg, result| {
+                            if result.is_err() {
+                                agg.push(result.err().unwrap());
+                            }
+                            agg
+                        });
+                    if !errs.is_empty() {
+                        return Err(GraphError::SomeConnectionDeletionsFailed { failures: errs });
+                    }
                 }
                 return Ok(());
             }

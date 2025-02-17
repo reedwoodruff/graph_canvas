@@ -431,6 +431,7 @@ impl GraphCanvas {
             host_slot_template_id: from_slot.slot_template_id.clone(),
             target_node_id: to_node.instance_id.clone(),
             target_slot_template_id: to_slot.slot_template_id.clone(),
+            can_delete: true,
         };
         let is_hovered = ix.hovered_connection.as_ref() == Some(&current_connection);
 

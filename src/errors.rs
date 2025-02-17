@@ -2,7 +2,7 @@ use core::fmt;
 
 use wasm_bindgen::JsValue;
 
-use crate::{graph::Connection, group, groupEnd, log};
+use crate::{graph::Connection, log};
 
 #[derive(Debug, Clone)]
 pub enum GraphError {
@@ -14,12 +14,23 @@ pub enum GraphError {
         slot_id: String,
     },
     TemplateNotFound(String),
+    ConnectionCreationFailed {
+        node_template_name: String,
+        slot_template_name: String,
+        reason: Box<GraphError>,
+    },
     InvalidConnection {
         connection: Connection,
         reason: String,
     },
     ValidationFailed(String),
     LockFailed(String),
+    SomeSlotDeletionsFailed {
+        failures: Vec<GraphError>,
+    },
+    SomeConnectionDeletionsFailed {
+        failures: Vec<GraphError>,
+    },
     NodeCreationFailed {
         node_template_id: String,
         node_template_name: String,
@@ -30,6 +41,23 @@ pub enum GraphError {
         node_template_name: String,
         reason: Box<GraphError>,
     },
+    SlotDeletionFailed {
+        slot_name: String,
+        reason: Box<GraphError>,
+    },
+    ConnectionDeletionFailed {
+        connection: Connection,
+        reason: Box<GraphError>,
+    },
+    ConnectionLocked,
+    SlotTemplateLocked {
+        name: String,
+    },
+    SlotInstanceLocked,
+    NodeTemplateLocked {
+        name: String,
+    },
+    NodeInstanceLocked,
     Other(String),
 }
 
@@ -45,12 +73,24 @@ impl fmt::Display for GraphError {
                 write!(f, "Slot {} not found on node {}", slot_id, node_id)
             }
             GraphError::TemplateNotFound(id) => write!(f, "Template not found: {}", id),
+            GraphError::ConnectionCreationFailed {
+                node_template_name,
+                slot_template_name,
+                reason,
+            } => {
+                write!(
+                    f,
+                    "Connection Creation Failed. From node {}, slot {}; Reason: {:#?}",
+                    node_template_name, slot_template_name, reason
+                )
+            }
             GraphError::InvalidConnection { connection, reason } => {
                 let Connection {
                     host_node_id,
                     host_slot_template_id: host_slot_id,
                     target_node_id,
                     target_slot_template_id: target_slot_id,
+                    ..
                 } = connection;
                 write!(
                     f,
@@ -65,36 +105,76 @@ impl fmt::Display for GraphError {
                 node_template_name,
                 reason,
             } => {
-                group("Node Creation Failed");
-                log(&format!("Node Template ID: {}", node_template_id));
-
-                log(&format!("Template name: {}", node_template_name));
-                log(&format!("Reason: {}", reason));
-                groupEnd();
-                Ok(())
-                // write!(
-                //             f,
-                //             "Node creation failed: {}\n Template name: {}\n Reason: {:#?}",
-                //             node_id, node_template_name, reason
-                //         )
+                write!(
+                    f,
+                    "Node creation failed: {}\n Template name: {}\n Reason: {:#?}",
+                    node_template_id, node_template_name, reason
+                )
             }
             GraphError::NodeDeletionFailed {
                 node_id,
                 node_template_name,
                 reason,
             } => {
-                group("Node Deletion Failed");
-                log(&format!("Node ID: {}", node_id));
-
-                log(&format!("Template name: {}", node_template_name));
-                log(&format!("Reason: {}", reason));
-                groupEnd();
+                write!(
+                    f,
+                    "Node deletion failed: {}\n Template name: {}\n Reason: {:#?}",
+                    node_id, node_template_name, reason
+                )
+            }
+            GraphError::SlotDeletionFailed { slot_name, reason } => {
+                write!(
+                    f,
+                    "Slot deletion failed: {}\n Reason: {:#?}",
+                    slot_name, reason
+                )
+            }
+            GraphError::ConnectionDeletionFailed { connection, reason } => {
+                write!(
+                    f,
+                    "Connection deletion failed; {:?}; {}",
+                    connection, reason
+                )
+            }
+            GraphError::ConnectionLocked => {
+                write!(f, "Connection is locked and cannot be deleted")
+            }
+            GraphError::SlotTemplateLocked { name } => {
+                write!(
+                    f,
+                    "Slot Template is locked and cannot be modified: {}",
+                    name
+                )
+            }
+            GraphError::SlotInstanceLocked => {
+                write!(f, "Node Instance is locked and cannot be modified")
+            }
+            GraphError::NodeTemplateLocked { name } => {
+                write!(
+                    f,
+                    "Node Template is locked and cannot be modified: {}",
+                    name
+                )
+            }
+            GraphError::NodeInstanceLocked => {
+                write!(f, "Node Instance is locked and cannot be modified")
+            }
+            GraphError::SomeConnectionDeletionsFailed { failures } => {
+                write!(
+                    f,
+                    "Some connections in the requested action were not deleted"
+                )?;
+                for failure in failures {
+                    write!(f, "{}", failure)?;
+                }
                 Ok(())
-                // write!(
-                //             f,
-                //             "Node deletion failed: {}\n Template name: {}\n Reason: {:#?}",
-                //             node_id, node_template_name, reason
-                // )
+            }
+            GraphError::SomeSlotDeletionsFailed { failures } => {
+                write!(f, "Some slots in the requested action were not cleared")?;
+                for failure in failures {
+                    write!(f, "{}", failure)?;
+                }
+                Ok(())
             }
             GraphError::Other(msg) => write!(f, "Other error: {}", msg),
         }

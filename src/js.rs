@@ -1,5 +1,5 @@
 use crate::common::generate_id;
-use crate::config::{GraphCanvasConfig, InitialNode};
+use crate::config::{GraphCanvasConfig, InitialConnection, InitialNode};
 use crate::graph::{NodeTemplate, SlotPosition, SlotTemplate, SlotType};
 use serde::{Deserialize, Serialize};
 use tsify::Tsify;
@@ -87,27 +87,27 @@ impl From<JsPartialConfig> for GraphCanvasConfig {
 //     pub max_connections: Option<usize>,
 // }
 
-#[derive(Serialize, Deserialize, Tsify)]
-#[tsify(into_wasm_abi, from_wasm_abi)]
-pub struct JsInitialNode {
-    pub template_name: String,
-    pub x: f64,
-    pub y: f64,
-    pub can_delete: bool,
-    pub can_move: bool,
-}
+// #[derive(Serialize, Deserialize, Tsify)]
+// #[tsify(into_wasm_abi, from_wasm_abi)]
+// pub struct JsInitialNode {
+//     pub template_name: String,
+//     pub x: f64,
+//     pub y: f64,
+//     pub can_delete: bool,
+//     pub can_move: bool,
+// }
 
-impl From<JsInitialNode> for InitialNode {
-    fn from(js_node: JsInitialNode) -> Self {
-        Self {
-            template_name: js_node.template_name,
-            x: js_node.x,
-            y: js_node.y,
-            can_delete: js_node.can_delete,
-            can_move: js_node.can_move,
-        }
-    }
-}
+// impl From<JsInitialNode> for InitialNode {
+//     fn from(js_node: JsInitialNode) -> Self {
+//         Self {
+//             template_name: js_node.template_name,
+//             x: js_node.x,
+//             y: js_node.y,
+//             can_delete: js_node.can_delete,
+//             can_move: js_node.can_move,
+//         }
+//     }
+// }
 
 impl From<String> for SlotPosition {
     fn from(value: String) -> Self {
@@ -151,6 +151,8 @@ pub struct JsPartialNodeTemplate {
     pub default_width: Option<f64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub default_height: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub can_modify_slots: Option<bool>,
 }
 
 #[derive(Serialize, Deserialize, Tsify)]
@@ -170,9 +172,10 @@ pub struct JsPartialSlotTemplate {
     pub min_connections: Option<usize>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub max_connections: Option<usize>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub can_modify_connections: Option<bool>,
 }
 
-#[cfg(feature = "js")]
 #[derive(Serialize, Deserialize, Tsify)]
 #[tsify(into_wasm_abi, from_wasm_abi)]
 pub struct JsPartialInitialNode {
@@ -186,6 +189,16 @@ pub struct JsPartialInitialNode {
     pub can_delete: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub can_move: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub initial_connections: Option<Vec<JsInitialConnection>>,
+}
+
+#[derive(Serialize, Deserialize, Tsify)]
+#[tsify(into_wasm_abi, from_wasm_abi)]
+pub struct JsInitialConnection {
+    pub host_slot_name: String,
+    pub target_instance_id: String,
+    pub can_delete: bool,
 }
 
 // Implement conversions with defaults
@@ -207,6 +220,7 @@ impl From<JsPartialNodeTemplate> for NodeTemplate {
             can_create: partial.can_create.unwrap_or(default.can_create),
             default_width: partial.default_width.unwrap_or(default.default_width),
             default_height: partial.default_height.unwrap_or(default.default_height),
+            can_modify_slots: partial.can_modify_slots.unwrap_or(default.can_modify_slots),
         }
     }
 }
@@ -229,18 +243,36 @@ impl From<JsPartialSlotTemplate> for SlotTemplate {
                 .unwrap_or(default.allowed_connections),
             min_connections: partial.min_connections.unwrap_or(default.min_connections),
             max_connections,
+            can_modify_connections: partial
+                .can_modify_connections
+                .unwrap_or(default.can_modify_connections),
         }
     }
 }
 
 impl From<JsPartialInitialNode> for InitialNode {
     fn from(partial: JsPartialInitialNode) -> Self {
+        let initial_connections = match partial.initial_connections {
+            Some(conns) => conns.into_iter().map(|conn| conn.into()).collect(),
+            None => vec![],
+        };
         Self {
             template_name: partial.template_name,
             x: partial.x,
             y: partial.y,
             can_delete: partial.can_delete.unwrap_or(true),
             can_move: partial.can_move.unwrap_or(true),
+            initial_connections,
+        }
+    }
+}
+
+impl From<JsInitialConnection> for InitialConnection {
+    fn from(js_conn: JsInitialConnection) -> Self {
+        Self {
+            can_delete: js_conn.can_delete,
+            host_slot_name: js_conn.host_slot_name,
+            target_instance_id: js_conn.target_instance_id,
         }
     }
 }

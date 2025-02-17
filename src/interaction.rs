@@ -574,6 +574,7 @@ impl GraphCanvas {
                                 host_slot_template_id: connection_drag.from_slot.clone(),
                                 target_node_id,
                                 target_slot_template_id: "incoming".to_string(),
+                                can_delete: true,
                             },
                             events,
                         )?;
