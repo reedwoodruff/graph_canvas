@@ -1,16 +1,15 @@
-use std::{cell::RefCell, f64::consts::PI, rc::Rc};
+use std::{cell::RefCell, collections::HashMap, f64::consts::PI, rc::Rc};
 use wasm_bindgen::prelude::*;
 use web_sys::{window, CanvasRenderingContext2d};
 
 use crate::{
-    common::get_bezier_control_points,
     errors::GraphError,
     graph::{Connection, Graph, NodeInstance, SlotInstance, SlotPosition, SlotTemplate, SlotType},
     interaction::{
         ContextMenu, ContextMenuAction, ContextMenuItem, ContextMenuTarget, InteractionState,
         Rectangle,
     },
-    log, GraphCanvas,
+    GraphCanvas,
 };
 
 /// Rendering
@@ -180,10 +179,27 @@ impl GraphCanvas {
                     let (start_x, start_y) =
                         self.calculate_slot_position(slot_template, node.instance, graph);
 
-                    // Draw the in-progress connection
+                    // Calculate node center for control point
+                    let node_center_x = node.instance.x + node.instance.width / 2.0;
+                    let node_center_y = node.instance.y + node.instance.height / 2.0;
+
+                    // Calculate angle from center to slot
+                    let start_angle = (start_y - node_center_y).atan2(start_x - node_center_x);
+
+                    // Calculate control point that follows the direction of the slot
+                    let control_distance = self.config.connection_control_point_distance;
+                    let cp_x = start_x + control_distance * start_angle.cos();
+                    let cp_y = start_y + control_distance * start_angle.sin();
+
+                    // Draw the in-progress connection as a bezier curve
                     context.begin_path();
                     context.move_to(start_x, start_y);
-                    context.line_to(connection_drag.current_x, connection_drag.current_y);
+                    context.quadratic_curve_to(
+                        cp_x,
+                        cp_y,
+                        connection_drag.current_x,
+                        connection_drag.current_y,
+                    );
                     context.set_stroke_style_str("#666666");
                     context.set_line_width(2.0);
                     context.stroke();
@@ -205,60 +221,64 @@ impl GraphCanvas {
             Some(t) => t,
             None => return Ok(()), // Skip drawing if template not found
         };
+
+        // Calculate node center and radius
+        let center_x = instance.x + instance.width / 2.0;
+        let center_y = instance.y + instance.height / 2.0;
+        let radius = (instance.width.min(instance.height) / 2.0) - 2.0; // Slightly smaller to account for stroke
+
         // Hover effect
-        {
-            let is_hovered = ix.hovered_node.as_ref() == Some(&instance.instance_id);
-
-            // Draw node rectangle with hover effect
-            context.begin_path();
-            context.set_fill_style_str("#ffffff");
-            context.set_stroke_style_str("#000000");
-
-            if is_hovered {
-                // Add shadow effect when hovered
-                context.set_shadow_color("#666666");
-                context.set_shadow_blur(10.0);
-                context.set_shadow_offset_x(0.0);
-                context.set_shadow_offset_y(0.0);
-            }
-
-            context.rect(instance.x, instance.y, instance.width, instance.height);
-            context.fill();
-            context.stroke();
-
-            // Reset shadow
-            context.set_shadow_color("transparent");
-            context.set_shadow_blur(0.0);
+        let is_hovered = ix.hovered_node.as_ref() == Some(&instance.instance_id);
+        if is_hovered {
+            // Add shadow effect when hovered
+            context.set_shadow_color("#666666");
+            context.set_shadow_blur(10.0);
+            context.set_shadow_offset_x(0.0);
+            context.set_shadow_offset_y(0.0);
         }
 
-        // Draw node rectangle
+        // Draw node circle
         context.begin_path();
         context.set_fill_style_str("#ffffff");
         context.set_stroke_style_str("#000000");
-        context.rect(instance.x, instance.y, instance.width, instance.height);
+        context.arc(center_x, center_y, radius, 0.0, 2.0 * std::f64::consts::PI)?;
         context.fill();
         context.stroke();
+
+        // Reset shadow
+        context.set_shadow_color("transparent");
+        context.set_shadow_blur(0.0);
 
         // Draw node title
         context.set_font("16px Arial");
         context.set_text_align("center");
         context.set_fill_style_str("#000000");
-        context.fill_text(
-            &template.name,
-            instance.x + instance.width / 2.0,
-            instance.y + 25.0,
-        )?;
+        context.fill_text(&template.name, center_x, center_y)?;
 
-        // Draw slots
+        // Calculate slot positions and draw them
+        let slot_positions = self.calculate_slot_positions(instance, graph);
+
         for (slot_instance, slot_template) in
             instance.slots.iter().zip(template.slot_templates.iter())
         {
-            self.draw_slot(context, slot_instance, slot_template, instance, graph, ix)?;
+            if let Some(position) = slot_positions.get(&slot_template.id) {
+                self.draw_slot_at_position(
+                    context,
+                    slot_instance,
+                    slot_template,
+                    instance,
+                    &graph,
+                    ix,
+                    position.0,
+                    position.1,
+                )?;
+            }
         }
 
         Ok(())
     }
 
+    // For backward compatibility with existing code
     fn draw_slot(
         &self,
         context: &CanvasRenderingContext2d,
@@ -268,118 +288,8 @@ impl GraphCanvas {
         graph: &Graph,
         ix: &InteractionState,
     ) -> Result<(), JsValue> {
-        // Hover effect
-        {
-            let is_hovered = ix.hovered_slot.as_ref()
-                == Some(&(
-                    node.instance_id.clone(),
-                    slot_instance.slot_template_id.clone(),
-                ));
-
-            if is_hovered {
-                // Add glow effect for hovered slots
-                context.set_shadow_color("#4444ff");
-                context.set_shadow_blur(8.0);
-                context.set_shadow_offset_x(0.0);
-                context.set_shadow_offset_y(0.0);
-            }
-        }
-        // Triangle dimensions
-        // let triangle_size = SLOT_DRAW_RADIUS * 1.5; // Make triangle slightly larger than circle hitbox
-        let triangle_size = self.config.slot_radius;
-
         let (x, y) = self.calculate_slot_position(slot_template, node, graph);
-
-        // Draw circle if it is incoming
-        context.begin_path();
-        if slot_template.slot_type == SlotType::Incoming {
-            context.arc(x, y, self.config.slot_radius, 0.0, 2.0 * PI)?;
-        } else {
-            // Draw triangle based on position and type
-            match &slot_template.position {
-                SlotPosition::Left => {
-                    // Outgoing triangle pointing right
-                    context.move_to(x + triangle_size, y - triangle_size);
-                    context.line_to(x - triangle_size, y);
-                    context.line_to(x + triangle_size, y + triangle_size);
-                }
-
-                SlotPosition::Right => {
-                    // Outgoing triangle pointing right
-                    context.move_to(x - triangle_size, y - triangle_size);
-                    context.line_to(x + triangle_size, y);
-                    context.line_to(x - triangle_size, y + triangle_size);
-                }
-                SlotPosition::Top => {
-                    // Outgoing triangle pointing up
-                    context.move_to(x - triangle_size, y + triangle_size);
-                    context.line_to(x + triangle_size, y + triangle_size);
-                    context.line_to(x, y - triangle_size);
-                }
-                SlotPosition::Bottom => {
-                    // Outgoing triangle pointing down
-                    context.move_to(x - triangle_size, y - triangle_size);
-                    context.line_to(x + triangle_size, y - triangle_size);
-                    context.line_to(x, y + triangle_size);
-                }
-            }
-        }
-        context.close_path();
-
-        // Color based on slot type and connection status
-        let fill_color = match (
-            &slot_template.slot_type,
-            slot_instance.connections.is_empty(),
-            slot_instance.connections.len() < slot_template.min_connections,
-            slot_instance.connections.len() < slot_template.max_connections.unwrap_or(usize::MAX),
-        ) {
-            (SlotType::Incoming, _, _, _) => "#fff",
-            (_, true, true, true) => "red",
-            (_, false, true, true) => "orange",
-            (_, _, false, true) => "lightgreen",
-            (_, _, false, false) => "green",
-            _ => "purple",
-        };
-        context.set_fill_style_str(fill_color);
-        context.fill();
-        context.stroke();
-
-        // Draw slot label
-        context.set_font("12px Arial");
-        context.set_fill_style_str("#000000");
-        let slot_radius = self.config.slot_radius;
-        match slot_template.position {
-            SlotPosition::Left => {
-                context.set_text_align("left");
-                context.fill_text(
-                    &slot_template.name,
-                    x + (slot_radius + 4.0),
-                    y + (slot_radius / 2.0),
-                )?;
-            }
-            SlotPosition::Right => {
-                context.set_text_align("right");
-                context.fill_text(
-                    &slot_template.name,
-                    x - (slot_radius + 4.0),
-                    y + (slot_radius / 2.0),
-                )?;
-            }
-            SlotPosition::Top => {
-                context.set_text_align("center");
-                context.fill_text(&slot_template.name, x, y + (slot_radius + 12.0))?;
-            }
-            SlotPosition::Bottom => {
-                context.set_text_align("center");
-                context.fill_text(&slot_template.name, x, y - (slot_radius + 4.0))?;
-            }
-        }
-
-        // Reset shadow
-        context.set_shadow_color("transparent");
-        context.set_shadow_blur(0.0);
-
-        Ok(())
+        self.draw_slot_at_position(context, slot_instance, slot_template, node, graph, ix, x, y)
     }
 
     fn draw_connections(
@@ -455,26 +365,29 @@ impl GraphCanvas {
         let (start_x, start_y) = self.calculate_slot_position(from_slot_template, from_node, graph);
         let (end_x, end_y) = self.calculate_slot_position(to_slot_template, to_node, graph);
 
+        // Calculate centers of nodes for control points
+        let from_center_x = from_node.x + from_node.width / 2.0;
+        let from_center_y = from_node.y + from_node.height / 2.0;
+        let to_center_x = to_node.x + to_node.width / 2.0;
+        let to_center_y = to_node.y + to_node.height / 2.0;
+
+        // Calculate angles from center to slot
+        let from_angle = (start_y - from_center_y).atan2(start_x - from_center_x);
+        let to_angle = (end_y - to_center_y).atan2(end_x - to_center_x);
+
         // Draw curved connection line
         context.begin_path();
         context.move_to(start_x, start_y);
 
-        // Calculate control points for curve
-        let (cp1_x, cp1_y) = get_bezier_control_points(
-            start_x,
-            start_y,
-            &from_slot_template.position,
-            self.config.connection_control_point_distance,
-        );
-        let (cp2_x, cp2_y) = get_bezier_control_points(
-            end_x,
-            end_y,
-            &to_slot_template.position,
-            self.config.connection_control_point_distance,
-        );
+        // Calculate control points that follow the direction of the slots
+        let control_point_distance = self.config.connection_control_point_distance;
+        let cp1_x = start_x + control_point_distance * from_angle.cos();
+        let cp1_y = start_y + control_point_distance * from_angle.sin();
+        let cp2_x = end_x + control_point_distance * to_angle.cos();
+        let cp2_y = end_y + control_point_distance * to_angle.sin();
 
         context.bezier_curve_to(cp1_x, cp1_y, cp2_x, cp2_y, end_x, end_y);
-        context.set_stroke_style_str("#666666");
+
         if is_hovered {
             context.set_line_width(3.0);
             context.set_stroke_style_str("#4444ff");
@@ -490,73 +403,365 @@ impl GraphCanvas {
 }
 
 impl GraphCanvas {
+    fn draw_slot_at_position(
+        &self,
+        context: &CanvasRenderingContext2d,
+        slot_instance: &SlotInstance,
+        slot_template: &SlotTemplate,
+        node: &NodeInstance,
+        graph: &Graph,
+        ix: &InteractionState,
+        x: f64,
+        y: f64,
+    ) -> Result<(), JsValue> {
+        // Hover effect
+        let is_hovered = ix.hovered_slot.as_ref()
+            == Some(&(
+                node.instance_id.clone(),
+                slot_instance.slot_template_id.clone(),
+            ));
+
+        if is_hovered {
+            // Add glow effect for hovered slots
+            context.set_shadow_color("#4444ff");
+            context.set_shadow_blur(8.0);
+            context.set_shadow_offset_x(0.0);
+            context.set_shadow_offset_y(0.0);
+        }
+
+        // Draw circle
+        context.begin_path();
+        context.arc(x, y, self.config.slot_radius, 0.0, 2.0 * PI)?;
+
+        // Color based on slot type and connection status
+        let fill_color = match (
+            &slot_template.slot_type,
+            slot_instance.connections.is_empty(),
+            slot_instance.connections.len() < slot_template.min_connections,
+            slot_instance.connections.len() < slot_template.max_connections.unwrap_or(usize::MAX),
+        ) {
+            (SlotType::Incoming, _, _, _) => "#fff",
+            (_, true, true, true) => "red",
+            (_, false, true, true) => "orange",
+            (_, _, false, true) => "lightgreen",
+            (_, _, false, false) => "green",
+            _ => "purple",
+        };
+        context.set_fill_style_str(fill_color);
+        context.fill();
+        context.stroke();
+
+        // Reset shadow
+        context.set_shadow_color("transparent");
+        context.set_shadow_blur(0.0);
+
+        // Draw slot label (dynamically positioned based on slot angle from center)
+        context.set_font("12px Arial");
+        context.set_fill_style_str("#000000");
+
+        // Calculate angle from node center to slot
+        let center_x = node.x + node.width / 2.0;
+        let center_y = node.y + node.height / 2.0;
+        let angle = (y - center_y).atan2(x - center_x);
+
+        // Text position is outside the slot
+        let text_radius = self.config.slot_radius * 1.5;
+        let text_x = x + text_radius * angle.cos();
+        let text_y = y + text_radius * angle.sin();
+
+        // Adjust text alignment based on which quadrant we're in
+        if angle.abs() < PI / 2.0 {
+            context.set_text_align("left");
+        } else {
+            context.set_text_align("right");
+        }
+
+        context.fill_text(&slot_template.name, text_x, text_y)?;
+
+        Ok(())
+    }
+
+    // Calculate dynamic slot positions based on connections
+    fn calculate_slot_positions(
+        &self,
+        node: &NodeInstance,
+        graph: &Graph,
+    ) -> HashMap<String, (f64, f64)> {
+        let node_template = node.capabilities(graph).template;
+        let center_x = node.x + node.width / 2.0;
+        let center_y = node.y + node.height / 2.0;
+        let radius = node.width.min(node.height) / 2.0 - 2.0;
+
+        let mut slot_positions = HashMap::new();
+        let mut slot_angles = HashMap::new();
+        let mut slot_weights = HashMap::new(); // For tracking slot importance (number of connections)
+
+        // First, determine optimal angles for slots with connections (including incoming slot)
+        for slot in &node.slots {
+            if !slot.connections.is_empty() {
+                let mut connection_angles = Vec::new();
+
+                // Calculate the angle to each connected node
+                for connection in &slot.connections {
+                    if let Some(target_node) = graph.node_instances.get(&connection.target_node_id)
+                    {
+                        let target_x = target_node.x + target_node.width / 2.0;
+                        let target_y = target_node.y + target_node.height / 2.0;
+                        let angle = (target_y - center_y).atan2(target_x - center_x);
+                        connection_angles.push(angle);
+                    }
+                }
+
+                // If we have connections, use the mean angle for this slot
+                if !connection_angles.is_empty() {
+                    // Calculate mean angle (careful with the cyclic nature of angles)
+                    let sin_sum: f64 = connection_angles.iter().map(|a| a.sin()).sum();
+                    let cos_sum: f64 = connection_angles.iter().map(|a| a.cos()).sum();
+                    let mean_angle = sin_sum.atan2(cos_sum);
+
+                    slot_angles.insert(slot.slot_template_id.clone(), mean_angle);
+                    slot_weights.insert(slot.slot_template_id.clone(), slot.connections.len());
+                }
+            }
+        }
+
+        // Check for incoming connections from other nodes and position the incoming slot accordingly
+        let incoming_slot_id = "incoming";
+        let mut incoming_connections = Vec::new();
+
+        // Find all nodes that connect to this node
+        for (other_id, other_node) in &graph.node_instances {
+            if other_id == &node.instance_id {
+                continue; // Skip self
+            }
+
+            for other_slot in &other_node.slots {
+                for conn in &other_slot.connections {
+                    if conn.target_node_id == node.instance_id {
+                        let other_x = other_node.x + other_node.width / 2.0;
+                        let other_y = other_node.y + other_node.height / 2.0;
+                        let angle = (other_y - center_y).atan2(other_x - center_x);
+                        incoming_connections.push(angle);
+                    }
+                }
+            }
+        }
+
+        // If there are incoming connections, position the incoming slot
+        if !incoming_connections.is_empty() {
+            let sin_sum: f64 = incoming_connections.iter().map(|a| a.sin()).sum();
+            let cos_sum: f64 = incoming_connections.iter().map(|a| a.cos()).sum();
+            let mean_angle = sin_sum.atan2(cos_sum);
+
+            // Position it opposite from the source nodes for better visual layout
+            // let opposite_angle = (mean_angle + std::f64::consts::PI) % (2.0 * std::f64::consts::PI);
+            slot_angles.insert(incoming_slot_id.to_string(), mean_angle);
+            slot_weights.insert(incoming_slot_id.to_string(), incoming_connections.len());
+        }
+
+        // For slots without connections, distribute them evenly around the circle
+        let num_slots_without_positions = node_template.slot_templates.len() - slot_angles.len(); // +1 for the incoming slot
+
+        if num_slots_without_positions > 0 {
+            // Find available spaces (avoiding positions too close to existing slots)
+            let mut unassigned_slots = Vec::new();
+
+            // Include the incoming slot if it's not already assigned
+            if !slot_angles.contains_key(incoming_slot_id) {
+                unassigned_slots.push(incoming_slot_id);
+            }
+
+            // Add unassigned template slots
+            for template in &node_template.slot_templates {
+                if !slot_angles.contains_key(&template.id) {
+                    unassigned_slots.push(&template.id);
+                }
+            }
+
+            // Sort by consistent criteria for stable layout
+            unassigned_slots.sort();
+
+            // Distribute remaining slots evenly
+            let angle_step = 2.0 * std::f64::consts::PI / (num_slots_without_positions as f64);
+
+            // Start from a position avoiding existing slots if possible
+            let mut start_angle = 0.0;
+            if !slot_angles.is_empty() {
+                // Find the largest gap between assigned angles
+                let mut assigned_angles: Vec<f64> = slot_angles.values().cloned().collect();
+                assigned_angles.sort_by(|a, b| a.partial_cmp(b).unwrap());
+
+                let mut max_gap = 0.0;
+                let mut max_gap_start = 0.0;
+
+                for i in 0..assigned_angles.len() {
+                    let next_idx = (i + 1) % assigned_angles.len();
+                    let mut gap = assigned_angles[next_idx] - assigned_angles[i];
+                    if gap < 0.0 {
+                        gap += 2.0 * std::f64::consts::PI;
+                    }
+
+                    if gap > max_gap {
+                        max_gap = gap;
+                        max_gap_start = assigned_angles[i];
+                    }
+                }
+
+                // Start in the middle of the largest gap
+                start_angle = max_gap_start + (max_gap / 2.0);
+            }
+
+            // Assign slots to evenly distributed positions
+            for (i, slot_id) in unassigned_slots.iter().enumerate() {
+                let angle = start_angle + (i as f64 * angle_step);
+                slot_angles.insert((*slot_id).to_string(), angle);
+                slot_weights.insert((*slot_id).to_string(), 0); // No connections for these slots
+            }
+        }
+
+        // Resolve slot overlaps
+        self.resolve_slot_overlaps(&mut slot_angles, &slot_weights);
+
+        // Now convert angles to positions
+        for (slot_id, angle) in slot_angles {
+            let x = center_x + radius * angle.cos();
+            let y = center_y + radius * angle.sin();
+            slot_positions.insert(slot_id, (x, y));
+        }
+
+        slot_positions
+    }
+
+    // Helper method to resolve slot overlaps, giving preference to slots with more connections
+    fn resolve_slot_overlaps(
+        &self,
+        slot_angles: &mut HashMap<String, f64>,
+        slot_weights: &HashMap<String, usize>,
+    ) {
+        // Minimum angle separation between slots (in radians)
+        let min_angle_separation = 0.15; // About 8.6 degrees
+
+        // First, sort slots by weight (descending) so higher-weight slots have priority
+        let mut slots: Vec<(String, f64, usize)> = slot_angles
+            .iter()
+            .map(|(id, angle)| (id.clone(), *angle, *slot_weights.get(id).unwrap_or(&0)))
+            .collect();
+
+        // Sort by weight (connections) in descending order
+        slots.sort_by(|a, b| b.2.cmp(&a.2));
+
+        // Clear the map before rebuilding
+        slot_angles.clear();
+
+        // Start with the highest weighted slot
+        if !slots.is_empty() {
+            slot_angles.insert(slots[0].0.clone(), slots[0].1);
+
+            // Now place remaining slots, adjusting their positions if they're too close to existing ones
+            for i in 1..slots.len() {
+                let (id, target_angle, _) = &slots[i];
+                let mut final_angle = *target_angle;
+                let mut retry_count = 0;
+                let max_retries = 10;
+
+                loop {
+                    let mut too_close = false;
+
+                    // Check against already placed slots
+                    for (_, placed_angle) in slot_angles.iter() {
+                        let angle_diff = (final_angle - placed_angle).abs();
+                        let normalized_diff =
+                            angle_diff.min(2.0 * std::f64::consts::PI - angle_diff);
+
+                        if normalized_diff < min_angle_separation {
+                            too_close = true;
+                            break;
+                        }
+                    }
+
+                    if !too_close || retry_count >= max_retries {
+                        break;
+                    }
+
+                    // If too close, nudge away from the closest slot
+                    let mut closest_angle = 0.0;
+                    let mut min_diff = std::f64::consts::PI * 2.0;
+
+                    for (_, placed_angle) in slot_angles.iter() {
+                        let angle_diff = (final_angle - placed_angle).abs();
+                        let normalized_diff =
+                            angle_diff.min(2.0 * std::f64::consts::PI - angle_diff);
+
+                        if normalized_diff < min_diff {
+                            min_diff = normalized_diff;
+                            closest_angle = *placed_angle;
+                        }
+                    }
+
+                    // Move away from closest slot
+                    let direction = if (final_angle - closest_angle + 2.0 * std::f64::consts::PI)
+                        % (2.0 * std::f64::consts::PI)
+                        < std::f64::consts::PI
+                    {
+                        1.0 // Move clockwise
+                    } else {
+                        -1.0 // Move counter-clockwise
+                    };
+
+                    // Increase nudge amount with retry count to escape local minima
+                    let nudge = min_angle_separation * (1.0 + 0.5 * retry_count as f64) * direction;
+                    final_angle = (final_angle + nudge + 2.0 * std::f64::consts::PI)
+                        % (2.0 * std::f64::consts::PI);
+
+                    retry_count += 1;
+                }
+
+                slot_angles.insert(id.clone(), final_angle);
+            }
+        }
+    }
+
+    // Legacy method kept for backward compatibility with existing code
     pub fn calculate_slot_position(
         &self,
         slot_template: &SlotTemplate,
         node: &NodeInstance,
         graph: &Graph,
     ) -> (f64, f64) {
-        let node_template = node.capabilities(graph).template;
-        let position = &slot_template.position;
-        let direction = &slot_template.slot_type;
+        // Calculate positions dynamically
+        let positions = self.calculate_slot_positions(node, graph);
 
-        let slots_on_side = node_template
-            .slot_templates
-            .iter()
-            .filter(|s_t| s_t.position == slot_template.position)
-            .collect::<Vec<_>>();
-        let num_slots_on_side = slots_on_side.len();
+        // If we have a calculated position, use it
+        if let Some(position) = positions.get(&slot_template.id) {
+            return *position;
+        }
 
-        // Find this slot's index among slots on the same side
-        let slot_index = slots_on_side
-            .iter()
-            .position(|slot_in_question| slot_in_question.id == slot_template.id)
-            .unwrap_or(0);
-
-        // Depending on the side and the directionality, push the slot in or out
-        let offset = match position {
-            SlotPosition::Left => match direction {
-                SlotType::Incoming => 0.0,
-                SlotType::Outgoing => -1.0,
-            },
-            SlotPosition::Right => match direction {
-                SlotType::Incoming => 0.0,
-                SlotType::Outgoing => 1.0,
-            },
-            SlotPosition::Top => match direction {
-                SlotType::Incoming => 0.0,
-                SlotType::Outgoing => -1.0,
-            },
-            SlotPosition::Bottom => match direction {
-                SlotType::Incoming => 0.0,
-                SlotType::Outgoing => 1.0,
-            },
-        } * self.config.slot_radius;
-
-        // Calculate position based on slot index and total slots
-        match position {
-            SlotPosition::Left | SlotPosition::Right => {
-                let x = if *position == SlotPosition::Left {
-                    node.x
-                } else {
-                    node.x + node.width
-                } + offset;
-                let spacing = node.height / (num_slots_on_side as f64 + 1.0);
-                let y = node.y + spacing * (slot_index as f64 + 1.0);
-                (x, y)
-            }
-            SlotPosition::Top | SlotPosition::Bottom => {
-                let y = if *position == SlotPosition::Top {
-                    node.y
-                } else {
-                    node.y + node.height
-                } + offset;
-                let spacing = node.width / (num_slots_on_side as f64 + 1.0);
-                let x = node.x + spacing * (slot_index as f64 + 1.0);
-                (x, y)
+        // Special case for the "incoming" slot
+        if slot_template.id == "incoming" {
+            if let Some(position) = positions.get("incoming") {
+                return *position;
             }
         }
+
+        // Fallback to old-style calculation for compatibility
+        let center_x = node.x + node.width / 2.0;
+        let center_y = node.y + node.height / 2.0;
+        let radius = node.width.min(node.height) / 2.0 - 2.0;
+
+        // Place at a default position based on original position property
+        let angle = match slot_template.position {
+            SlotPosition::Right => 0.0,
+            SlotPosition::Bottom => std::f64::consts::PI / 2.0,
+            SlotPosition::Left => std::f64::consts::PI,
+            SlotPosition::Top => 3.0 * std::f64::consts::PI / 2.0,
+        };
+
+        (
+            center_x + radius * angle.cos(),
+            center_y + radius * angle.sin(),
+        )
     }
+
     pub(crate) fn get_bezier_point(
         &self,
         t: f64,
@@ -608,21 +813,25 @@ impl GraphCanvas {
         point: (f64, f64),
         start: (f64, f64),
         end: (f64, f64),
-        from_position: &SlotPosition,
-        to_position: &SlotPosition,
+        from_node: &NodeInstance,
+        to_node: &NodeInstance,
     ) -> f64 {
-        let (cp1_x, cp1_y) = get_bezier_control_points(
-            start.0,
-            start.1,
-            from_position,
-            self.config.connection_control_point_distance,
-        );
-        let (cp2_x, cp2_y) = get_bezier_control_points(
-            end.0,
-            end.1,
-            to_position,
-            self.config.connection_control_point_distance,
-        );
+        // Calculate node centers
+        let from_center_x = from_node.x + from_node.width / 2.0;
+        let from_center_y = from_node.y + from_node.height / 2.0;
+        let to_center_x = to_node.x + to_node.width / 2.0;
+        let to_center_y = to_node.y + to_node.height / 2.0;
+
+        // Calculate angles from center to slot
+        let from_angle = (start.1 - from_center_y).atan2(start.0 - from_center_x);
+        let to_angle = (end.1 - to_center_y).atan2(end.0 - to_center_x);
+
+        // Calculate control points
+        let control_distance = self.config.connection_control_point_distance;
+        let cp1_x = start.0 + control_distance * from_angle.cos();
+        let cp1_y = start.1 + control_distance * from_angle.sin();
+        let cp2_x = end.0 + control_distance * to_angle.cos();
+        let cp2_y = end.1 + control_distance * to_angle.sin();
 
         // Sample points along the curve
         let samples = 50;

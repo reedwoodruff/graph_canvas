@@ -18,3 +18,16 @@ pub fn get_bezier_control_points(
         SlotPosition::Bottom => (x, y + control_point_distance),
     }
 }
+
+// Helper function to adjust a point's position based on an angle from center
+pub fn get_point_from_center(
+    center_x: f64,
+    center_y: f64,
+    angle: f64,
+    distance: f64,
+) -> (f64, f64) {
+    (
+        center_x + distance * angle.cos(),
+        center_y + distance * angle.sin(),
+    )
+}

@@ -363,8 +363,8 @@ impl GraphCanvas {
                             (x, y),
                             (start_x, start_y),
                             (end_x, end_y),
-                            &start_slot_template.position,
-                            &end_slot_template.position,
+                            host_instance,
+                            target_instance,
                         );
 
                         if distance < 5.0 {
@@ -415,11 +415,17 @@ impl GraphCanvas {
         }
         // Check if clicked on a node
         for (id, instance) in graph.node_instances.iter() {
-            if x >= instance.x
-                && x <= instance.x + instance.width
-                && y >= instance.y
-                && y <= instance.y + instance.height
-            {
+            // For circular nodes, check distance from center
+            let center_x = instance.x + instance.width / 2.0;
+            let center_y = instance.y + instance.height / 2.0;
+            let radius = instance.width.min(instance.height) / 2.0;
+            
+            // Calculate distance from center of node
+            let dx = x - center_x;
+            let dy = y - center_y;
+            let distance = (dx*dx + dy*dy).sqrt();
+            
+            if distance <= radius {
                 ix.click_initiated_on_node = Some(id.clone());
                 return Ok(());
             }
@@ -452,11 +458,17 @@ impl GraphCanvas {
 
         // Check for hovering over nodes
         for (id, instance) in &graph.node_instances {
-            if x >= instance.x
-                && x <= instance.x + instance.width
-                && y >= instance.y
-                && y <= instance.y + instance.height
-            {
+            // For circular nodes, check distance from center
+            let center_x = instance.x + instance.width / 2.0;
+            let center_y = instance.y + instance.height / 2.0;
+            let radius = instance.width.min(instance.height) / 2.0;
+            
+            // Calculate distance from center of node
+            let dx = x - center_x;
+            let dy = y - center_y;
+            let distance = (dx*dx + dy*dy).sqrt();
+            
+            if distance <= radius {
                 ix.hovered_node = Some(id.clone());
                 return Ok(());
             }
@@ -646,11 +658,17 @@ impl GraphCanvas {
                 }
 
                 // Check Nodes
-                if x >= instance.x
-                    && x <= instance.x + instance.width
-                    && y >= instance.y
-                    && y <= instance.y + instance.height
-                {
+                // For circular nodes, check distance from center
+                let center_x = instance.x + instance.width / 2.0;
+                let center_y = instance.y + instance.height / 2.0;
+                let radius = instance.width.min(instance.height) / 2.0;
+                
+                // Calculate distance from center of node
+                let dx = x - center_x;
+                let dy = y - center_y;
+                let distance = (dx*dx + dy*dy).sqrt();
+                
+                if distance <= radius {
                     let context_target = ContextMenuTarget::Node(instance_id.clone());
                     ix.context_menu = Some(ContextMenu {
                         x,
