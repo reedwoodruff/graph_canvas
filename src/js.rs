@@ -191,6 +191,8 @@ pub struct JsPartialInitialNode {
     pub can_move: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub initial_connections: Option<Vec<JsInitialConnection>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub id: Option<String>,
 }
 
 #[derive(Serialize, Deserialize, Tsify)]
@@ -263,6 +265,7 @@ impl From<JsPartialInitialNode> for InitialNode {
             can_delete: partial.can_delete.unwrap_or(true),
             can_move: partial.can_move.unwrap_or(true),
             initial_connections,
+            id: partial.id,
         }
     }
 }

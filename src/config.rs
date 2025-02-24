@@ -1,6 +1,6 @@
 use crate::graph::NodeTemplate;
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct GraphCanvasConfig {
     // Visual settings
     pub context_menu_size: (f64, f64),
@@ -46,7 +46,7 @@ impl Default for GraphCanvasConfig {
     }
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct InitialNode {
     pub template_name: String,
     pub x: f64,
@@ -54,6 +54,7 @@ pub struct InitialNode {
     pub can_delete: bool,
     pub can_move: bool,
     pub initial_connections: Vec<InitialConnection>,
+    pub id: Option<String>,
 }
 impl InitialNode {
     pub fn new(template_name: String) -> Self {
@@ -64,11 +65,12 @@ impl InitialNode {
             can_delete: true,
             can_move: true,
             initial_connections: vec![],
+            id: None,
         }
     }
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct InitialConnection {
     pub host_slot_name: String,
     pub target_instance_id: String,

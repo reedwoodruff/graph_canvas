@@ -10,7 +10,7 @@ use crate::{
         ContextMenu, ContextMenuAction, ContextMenuItem, ContextMenuTarget, InteractionState,
         Rectangle,
     },
-    GraphCanvas,
+    log, GraphCanvas,
 };
 
 /// Rendering

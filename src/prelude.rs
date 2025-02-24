@@ -1,4 +1,5 @@
 pub use crate::config::GraphCanvasConfig;
+pub use crate::config::InitialConnection;
 pub use crate::config::InitialNode;
 pub use crate::graph::Connection;
 pub use crate::graph::NodeTemplate;

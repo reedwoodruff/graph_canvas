@@ -21,6 +21,7 @@ mod layout;
 pub mod prelude;
 
 pub use config::GraphCanvasConfig;
+pub use config::InitialConnection;
 pub use config::InitialNode;
 pub use graph::Connection;
 pub use graph::NodeTemplate;
@@ -63,6 +64,14 @@ pub struct GraphCanvas {
     events: Arc<Mutex<events::EventSystem>>,
     layout_engine: Arc<Mutex<LayoutEngine>>,
 }
+impl std::fmt::Debug for GraphCanvas {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("GraphCanvas")
+            .field("config", &self.config)
+            .field("graph", &self.graph)
+            .finish()
+    }
+}
 
 #[wasm_bindgen]
 impl GraphCanvas {
@@ -97,6 +106,7 @@ impl GraphCanvas {
         }
 
         // Create initial nodes
+        graph.create_initial_nodes(&config.initial_nodes)?;
 
         let events = Arc::new(Mutex::new(events::EventSystem::new()));
         events.lock().unwrap().subscribe(Box::new(|event| {
@@ -130,6 +140,8 @@ impl GraphCanvas {
         //
         graph_canvas.setup_events()?;
         graph_canvas.start_render_loop()?;
+
+        log(&format!("{:#?}", graph_canvas));
 
         Ok(graph_canvas)
     }

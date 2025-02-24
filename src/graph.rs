@@ -224,6 +224,7 @@ pub enum SlotType {
     Outgoing,
 }
 
+#[derive(Debug)]
 pub struct Graph {
     pub(crate) node_templates: HashMap<String, NodeTemplate>,
     pub(crate) node_instances: HashMap<String, NodeInstance>,
@@ -293,14 +294,59 @@ impl Graph {
                         Box::new(GraphError::TemplateNotFound(node.template_name.clone())),
                     ),
                 )?;
-                let new_instance = self.create_instance(&template.template_id, node.x, node.y)?;
+                // let template_id = self
+                //     .get_node_template_by_name(&node.template_name.clone())
+                //     .ok_or(
+                //         GraphError::ConfigurationError(
+                //                                 "Could not create initial node".to_string(),
+                //                                 Box::new(GraphError::TemplateNotFound(node.template_name.clone())),
+                //                             ),
+
+                //     );
+
+                let instance_id = node.id.clone().unwrap_or(generate_id());
+                let instance = NodeInstance {
+                    instance_id: instance_id.clone(),
+                    template_id: template.template_id.clone(),
+                    x: node.x,
+                    y: node.y,
+                    width: template.default_width,
+                    height: template.default_height,
+                    can_move: true,
+                    can_delete: true,
+                    can_modify_connections: true,
+                    slots: template
+                        .slot_templates
+                        .iter()
+                        .map(|slot_template| SlotInstance {
+                            node_instance_id: instance_id.clone(),
+                            node_template_id: template.template_id.clone(),
+                            slot_template_id: slot_template.id.clone(),
+                            connections: Vec::new(),
+                            can_modify: true,
+                        })
+                        .collect(),
+                };
+
+                self.node_instances.insert(instance_id.clone(), instance);
+                // let new_instance =
+                //     self.create_instance(&template.template_id, node.x, node.y, node.id.clone());
+                // let new_instance = match new_instance {
+                //     Ok(inner) => inner,
+                //     Err(err) => {
+                //         log(&format!("{:?}", err));
+                //         return Err(err);
+                //     }
+                // };
 
                 // Update instance properties if needed
-                if let Some(instance) = self.node_instances.get_mut(&new_instance) {
+                if let Some(instance) = self.node_instances.get_mut(&instance_id) {
                     instance.can_delete = node.can_delete;
                     instance.can_move = node.can_move;
+                } else {
+                    log("Instance wasn't created");
                 }
-                Ok::<(String, &InitialNode), GraphError>((new_instance, node))
+                Ok::<(String, &InitialNode), GraphError>((instance_id, node))
             })
             .collect::<Vec<_>>();
 
@@ -309,6 +355,8 @@ impl Graph {
         for item in new_ids {
             if let Ok((host_node_id, node)) = item {
                 for initial_connection in &node.initial_connections {
+                    // log(&format!("{:#?}", self));
+                    // log(&host_node_id);
                     let host_node_caps = self
                         .get_node_capabilities(&host_node_id)
                         .expect("Just created node, should exist");
@@ -335,7 +383,7 @@ impl Graph {
                     }
                     let host_node_slot_id = host_node_slot.unwrap().id.clone();
                     let target_node_id = other_caps.instance.instance_id.clone();
-                    let target_slot_template_id = "Incoming".to_string();
+                    let target_slot_template_id = "incoming".to_string();
 
                     drop(host_node_caps);
 
@@ -365,6 +413,7 @@ impl Graph {
         node_template_id: &str,
         x: f64,
         y: f64,
+        id: Option<String>,
     ) -> GraphResult<String> {
         let template = {
             let result = self.node_templates.get(node_template_id).ok_or(Err(
@@ -395,7 +444,7 @@ impl Graph {
             });
         }
 
-        let instance_id = generate_id();
+        let instance_id = id.unwrap_or(generate_id());
         let instance = NodeInstance {
             instance_id: instance_id.clone(),
             template_id: node_template_id.to_string(),
@@ -913,7 +962,7 @@ impl Graph {
             } => self.delete_slot_connections(&node_id, &slot_id),
             GraphCommand::CreateConnection(connection) => self.connect_slots(connection, events),
             GraphCommand::CreateNode { template_id, x, y } => {
-                self.create_instance(&template_id, x, y).map(|_| ())
+                self.create_instance(&template_id, x, y, None).map(|_| ())
             }
         };
         match &result {
