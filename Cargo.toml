@@ -28,6 +28,7 @@ web-sys = { version = "*", features = [
     "Event",
     "EventListener",
     "EventTarget",
+    "NodeList",
     "ResizeObserver",
     "CssStyleDeclaration",
 ] }

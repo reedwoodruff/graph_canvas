@@ -32,42 +32,128 @@
                     context_menu_size: [400, 100],
                     node_templates: [
                         {
-                            name: "Node",
+                            name: "Basic Node",
                             slot_templates: [
                                 {
-                                    name: "To Next",
+                                    name: "Output",
                                     position: "Right",
                                     slot_type: "Outgoing",
-                                    allowed_connections: ["Node", "Test Node"],
-                                    min_connections: 1,
-                                    max_connections: 1,
+                                    allowed_connections: ["Basic Node", "Math Node", "Test Node"],
+                                    min_connections: 0,
+                                    max_connections: 5,
+                                },
+                                {
+                                    name: "Input",
+                                    position: "Left",
+                                    slot_type: "Incoming",
+                                    allowed_connections: ["Basic Node", "Math Node", "Test Node"],
+                                    min_connections: 0,
+                                    max_connections: 5,
                                 },
                             ],
                             default_width: 150,
                             default_height: 100,
                         },
                         {
-                            name: "Node2",
+                            name: "Math Node",
                             slot_templates: [
                                 {
-                                    name: "Hunky Dory",
-                                    position: "Top",
+                                    name: "Value Out",
+                                    position: "Right",
                                     slot_type: "Outgoing",
-                                    allowed_connections: [
-                                        "Node",
-                                        "Test Node",
-                                        "Node2",
-                                    ],
-                                    min_connections: 3,
-                                    max_connections: 10000,
+                                    allowed_connections: ["Basic Node", "Math Node", "Test Node"],
+                                    min_connections: 0,
+                                    max_connections: 5,
                                 },
                                 {
-                                    name: "On",
-                                    position: "Bottom",
-                                    allowed_connections: ["Node"],
-                                    slot_type: "Outgoing",
+                                    name: "Value A",
+                                    position: "Left",
+                                    slot_type: "Incoming",
+                                    allowed_connections: ["Basic Node", "Math Node"],
+                                    min_connections: 0,
+                                    max_connections: 1,
+                                },
+                                {
+                                    name: "Value B",
+                                    position: "Left",
+                                    slot_type: "Incoming",
+                                    allowed_connections: ["Basic Node", "Math Node"],
+                                    min_connections: 0,
+                                    max_connections: 1,
                                 },
                             ],
+                            default_width: 150,
+                            default_height: 120,
+                        },
+                        {
+                            name: "Logic Node",
+                            slot_templates: [
+                                {
+                                    name: "Then",
+                                    position: "Right",
+                                    slot_type: "Outgoing",
+                                    allowed_connections: ["Basic Node", "Math Node", "Logic Node"],
+                                    min_connections: 0,
+                                    max_connections: 1,
+                                },
+                                {
+                                    name: "Else",
+                                    position: "Right",
+                                    slot_type: "Outgoing",
+                                    allowed_connections: ["Basic Node", "Math Node", "Logic Node"],
+                                    min_connections: 0,
+                                    max_connections: 1,
+                                },
+                                {
+                                    name: "Condition",
+                                    position: "Left",
+                                    slot_type: "Incoming",
+                                    allowed_connections: ["Basic Node", "Math Node"],
+                                    min_connections: 0,
+                                    max_connections: 1,
+                                },
+                            ],
+                            default_width: 150,
+                            default_height: 120,
+                        },
+                        {
+                            name: "Data Node",
+                            slot_templates: [
+                                {
+                                    name: "Data Out",
+                                    position: "Right",
+                                    slot_type: "Outgoing",
+                                    allowed_connections: ["Basic Node", "Math Node", "Data Node"],
+                                    min_connections: 0,
+                                    max_connections: 10,
+                                },
+                            ],
+                            default_width: 150,
+                            default_height: 100,
+                        },
+                    ],
+                    // Define template groups
+                    template_groups: [
+                        {
+                            id: "basic",
+                            name: "Basic",
+                            templates: ["Basic Node"]
+                        },
+                        {
+                            id: "math",
+                            name: "Mathematics",
+                            description: "Mathematical operation nodes",
+                            templates: ["Math Node"]
+                        },
+                        {
+                            id: "logic",
+                            name: "Logic",
+                            templates: ["Logic Node"]
+                        },
+                        {
+                            id: "data",
+                            name: "Data",
+                            templates: ["Data Node"]
                         },
                     ],
                     initial_nodes: [

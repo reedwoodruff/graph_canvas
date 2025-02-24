@@ -743,9 +743,6 @@ impl GraphCanvas {
             let slot_count = slots.len();
             let angle_step = 2.0 * std::f64::consts::PI / slot_count as f64;
 
-            // First, determine if there's an "incoming" slot that should get special treatment
-            let incoming_slot_pos = slots.iter().position(|(id, _, _)| id == incoming_slot_id);
-
             // Position the slots evenly, sorting by ID for stability
             slot_angles.clear();
 
@@ -891,7 +888,6 @@ impl GraphCanvas {
 
                         let mut max_gap = 0.0;
                         let mut gap_middle = 0.0;
-                        let mut max_gap_idx = 0;
 
                         for i in 0..angles.len() {
                             let next_idx = (i + 1) % angles.len();
@@ -903,7 +899,6 @@ impl GraphCanvas {
                             if gap > max_gap {
                                 max_gap = gap;
                                 gap_middle = (angles[i] + gap / 2.0) % (2.0 * std::f64::consts::PI);
-                                max_gap_idx = i;
                             }
                         }
 
@@ -955,8 +950,8 @@ impl GraphCanvas {
 
                 for i in 0..slots.len() {
                     for j in (i + 1)..slots.len() {
-                        let (id_i, angle_i, weight_i) = &slots[i];
-                        let (id_j, angle_j, weight_j) = &slots[j];
+                        let (id_i, angle_i, _weight_i) = &slots[i];
+                        let (id_j, angle_j, _weight_j) = &slots[j];
 
                         // Calculate angular distance
                         let mut diff = (angle_i - angle_j).abs();
@@ -988,7 +983,7 @@ impl GraphCanvas {
 
         // Final adjustment: make sure incoming slot isn't overlapping with others
         if has_active_incoming {
-            let incoming_pos =
+            let _incoming_pos =
                 incoming_idx.and_then(|idx| slots.get(idx).map(|(_, angle, _)| *angle));
         }
 

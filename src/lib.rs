@@ -4,6 +4,7 @@ use errors::{GraphError, GraphResult};
 use graph::Graph;
 use interaction::{InteractionMode, InteractionState};
 use layout::{LayoutEngine, LayoutType};
+use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use wasm_bindgen::{prelude::*, JsCast};
 use web_sys::{window, HtmlCanvasElement, HtmlDivElement, HtmlElement};
@@ -23,6 +24,7 @@ pub mod prelude;
 pub use config::GraphCanvasConfig;
 pub use config::InitialConnection;
 pub use config::InitialNode;
+pub use config::TemplateGroup;
 pub use graph::Connection;
 pub use graph::NodeTemplate;
 pub use graph::SlotPosition;
@@ -38,6 +40,8 @@ pub use js::JsPartialInitialNode;
 pub use js::JsPartialNodeTemplate;
 #[cfg(feature = "js")]
 pub use js::JsPartialSlotTemplate;
+#[cfg(feature = "js")]
+pub use js::JsTemplateGroup;
 
 #[wasm_bindgen]
 extern "C" {
@@ -218,115 +222,248 @@ impl GraphCanvas {
         graph_canvas: &GraphCanvas,
     ) -> Result<(), JsValue> {
         let document = window().unwrap().document().unwrap();
+
+        // Create main toolbar container with improved styling
         let toolbar = document.create_element("div")?;
         toolbar.set_attribute("id", "graph-canvas-toolbar")?;
-        toolbar.set_attribute("style", "display: flex; gap: 10px; padding: 8px;")?;
+        toolbar.set_attribute("style",
+            "display: flex; gap: 12px; padding: 8px; background-color: #f5f5f5; border-bottom: 1px solid #ddd; align-items: center; flex-wrap: wrap;"
+        )?;
 
-        // "Pan" button
+        // Create toolbar sections
+        let interaction_section = document.create_element("div")?;
+        interaction_section
+            .set_attribute("style", "display: flex; gap: 6px; align-items: center;")?;
+
+        let add_node_section = document.create_element("div")?;
+        add_node_section.set_attribute(
+            "style",
+            "display: flex; gap: 6px; align-items: center; margin-left: 10px;",
+        )?;
+
+        let layout_section = document.create_element("div")?;
+        layout_section.set_attribute(
+            "style",
+            "display: flex; gap: 6px; align-items: center; margin-left: auto;",
+        )?;
+
+        // === INTERACTION SECTION ===
+
+        // Add section label
+        let interaction_label = document.create_element("span")?;
+        interaction_label.set_inner_html("Mode:");
+        interaction_label.set_attribute("style", "font-size: 12px; font-weight: bold;")?;
+        interaction_section.append_child(&interaction_label)?;
+
+        // Pointer button
+        let pointer_btn = document.create_element("button")?;
+        pointer_btn.set_inner_html("🖱 Pointer");
+        pointer_btn.set_attribute("id", "btn-pointer")?;
+        pointer_btn.set_attribute("class", "toolbar-btn active")?;
+        pointer_btn.set_attribute("style", "padding: 4px 8px; border: 1px solid #ccc; border-radius: 4px; background: white; cursor: pointer;")?;
+        interaction_section.append_child(&pointer_btn)?;
+
+        // Pan button
         let pan_btn = document.create_element("button")?;
-        pan_btn.set_inner_html("Pan");
+        pan_btn.set_inner_html("✋ Pan");
         pan_btn.set_attribute("id", "btn-pan")?;
-        toolbar.append_child(&pan_btn)?;
+        pan_btn.set_attribute("class", "toolbar-btn")?;
+        pan_btn.set_attribute("style", "padding: 4px 8px; border: 1px solid #ccc; border-radius: 4px; background: white; cursor: pointer;")?;
+        interaction_section.append_child(&pan_btn)?;
 
-        // "Add Node" button
+        // === ADD NODE SECTION ===
+
+        // Add Node button - now styled as a dropdown trigger
         let add_node_btn = document.create_element("button")?;
-        add_node_btn.set_inner_html("Add Node");
+        add_node_btn.set_inner_html("➕ Add Node");
         add_node_btn.set_attribute("id", "btn-add-node")?;
-        toolbar.append_child(&add_node_btn)?;
+        add_node_btn.set_attribute("class", "toolbar-btn")?;
+        add_node_btn.set_attribute("style", "padding: 4px 8px; border: 1px solid #ccc; border-radius: 4px; background: white; cursor: pointer;")?;
+        add_node_section.append_child(&add_node_btn)?;
 
-        // Dropdown for selecting node template.
-        let select_node: HtmlElement = document.create_element("select")?.dyn_into()?;
-        select_node.set_attribute("id", "select-node-template")?;
+        // Template group container (visible only when in add mode)
+        let template_group_container = document.create_element("div")?;
+        template_group_container.set_attribute("id", "template-group-container")?;
+        template_group_container.set_attribute("style", "display: none; position: absolute; top: 40px; left: 160px; background: white; border: 1px solid #ccc; border-radius: 4px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); z-index: 100; min-width: 200px; padding: 8px;")?;
 
-        let creatable_templates = &config
-            .node_templates
-            .iter()
-            .filter(|template| template.can_create)
-            .collect::<Vec<_>>();
-        if !creatable_templates.is_empty() {
-            graph_canvas.set_current_node_template(&creatable_templates.first().unwrap().name);
-        }
-        for template in creatable_templates.iter() {
-            let option = document.create_element("option")?;
-            option.set_attribute("value", &template.name)?;
-            option.set_inner_html(&template.name);
-            select_node.append_child(&option)?;
-        }
-        // You can add more options here if you have multiple templates.
-        // Optionally, hide it initially.
-        select_node.set_attribute("style", "display: none;")?;
-        toolbar.append_child(&select_node)?;
+        // Organize templates into groups
+        let template_groups = if config.template_groups.is_empty() {
+            // If no groups are defined, create a default group with all templates
+            let mut groups = HashMap::new();
+            let creatable_templates = config
+                .node_templates
+                .iter()
+                .filter(|template| template.can_create)
+                .collect::<Vec<_>>();
 
-        // Set up event listeners for the select node dropdown
-        {
-            let graph_canvas_clone = graph_canvas.clone();
-            let on_select_change = Closure::wrap(Box::new(move |event: web_sys::Event| {
-                let target = event
-                    .target()
-                    .expect("event should have target")
-                    .dyn_into::<web_sys::HtmlSelectElement>()
-                    .expect("target should be select element");
+            if !creatable_templates.is_empty() {
+                groups.insert("All Templates".to_string(), creatable_templates);
+            }
+            groups
+        } else {
+            // Use the defined template groups
+            config.get_template_group_map()
+        };
 
-                let value = target.value();
-                graph_canvas_clone.set_current_node_template(&value);
-                log(&format!("Selected template: {}", value));
-            }) as Box<dyn FnMut(_)>);
-            select_node.add_event_listener_with_callback(
-                "change",
-                on_select_change.as_ref().unchecked_ref(),
+        // Set first available template as default if any exist
+        let mut first_template_name = None;
+
+        // Create tab buttons for each group
+        let tab_buttons = document.create_element("div")?;
+        tab_buttons.set_attribute("class", "template-group-tabs")?;
+        tab_buttons.set_attribute("style", "display: flex; gap: 2px; margin-bottom: 8px; border-bottom: 1px solid #eee; padding-bottom: 4px;")?;
+
+        let mut content_containers = Vec::new();
+
+        for (i, (group_id, templates)) in template_groups.iter().enumerate() {
+            // Skip empty groups
+            if templates.is_empty() {
+                continue;
+            }
+
+            // Create tab button for this group
+            let tab_button = document.create_element("button")?;
+            let group_name = if group_id == "other" {
+                "Other".to_string()
+            } else if let Some(group) = config.template_groups.iter().find(|g| &g.id == group_id) {
+                group.name.clone()
+            } else {
+                group_id.clone()
+            };
+
+            tab_button.set_inner_html(&group_name);
+            tab_button.set_attribute("data-group-id", group_id)?;
+            tab_button.set_attribute(
+                "class",
+                if i == 0 {
+                    "tab-button active"
+                } else {
+                    "tab-button"
+                },
             )?;
-            on_select_change.forget();
+            tab_button.set_attribute("style", &format!(
+                "padding: 4px 8px; border: none; background: {}; cursor: pointer; border-radius: 4px 4px 0 0;",
+                if i == 0 { "#f0f0f0" } else { "transparent" }
+            ))?;
+            tab_buttons.append_child(&tab_button)?;
+
+            // Create content container for this group
+            let content_container = document.create_element("div")?;
+            content_container.set_attribute("class", "template-group-content")?;
+            content_container.set_attribute("data-group-id", group_id)?;
+            content_container.set_attribute(
+                "style",
+                &format!(
+                    "display: {}; flex-direction: column; gap: 4px;",
+                    if i == 0 { "flex" } else { "none" }
+                ),
+            )?;
+
+            // Add template buttons to the content container
+            for template in templates {
+                let template_button = document.create_element("button")?;
+                template_button.set_inner_html(&template.name);
+                template_button.set_attribute("data-template-name", &template.name)?;
+                template_button.set_attribute("class", "template-button")?;
+                template_button.set_attribute("style", "padding: 6px 10px; border: 1px solid #ddd; border-radius: 4px; text-align: left; background: white; cursor: pointer; margin: 2px 0;")?;
+                content_container.append_child(&template_button)?;
+
+                // Remember the first template name for default selection
+                if first_template_name.is_none() {
+                    first_template_name = Some(template.name.clone());
+                }
+            }
+
+            template_group_container.append_child(&content_container)?;
+            content_containers.push(content_container);
         }
 
-        // "Cancel Add Node" button to return to default mode.
+        template_group_container.append_child(&tab_buttons)?;
+        for container in content_containers {
+            template_group_container.append_child(&container)?;
+        }
+
+        // Set the first template as default if available
+        if let Some(template_name) = first_template_name {
+            graph_canvas.set_current_node_template(&template_name);
+        }
+
+        // Cancel button
         let cancel_btn = document.create_element("button")?;
         cancel_btn.set_inner_html("Cancel");
         cancel_btn.set_attribute("id", "btn-cancel")?;
-        // Hide initially.
-        cancel_btn.set_attribute("style", "display: none;")?;
-        toolbar.append_child(&cancel_btn)?;
+        cancel_btn.set_attribute("style", "display: none; padding: 4px 8px; border: 1px solid #ccc; border-radius: 4px; background: white; cursor: pointer;")?;
+        add_node_section.append_child(&cancel_btn)?;
 
-        // Append toolbar above or below the canvas as needed.
+        // Add the template group container to the add node section
+        add_node_section.append_child(&template_group_container)?;
+
+        // === LAYOUT SECTION ===
+
+        // Layout label
+        let layout_label = document.create_element("span")?;
+        layout_label.set_inner_html("Layout:");
+        layout_label.set_attribute("style", "font-size: 12px; font-weight: bold;")?;
+        layout_section.append_child(&layout_label)?;
+
+        // Layout type selector
+        let layout_select = document.create_element("select")?;
+        layout_select.set_attribute(
+            "style",
+            "padding: 4px 8px; border: 1px solid #ccc; border-radius: 4px; background: white;",
+        )?;
+        layout_select.set_inner_html(
+            r#"
+            <option value="free">Free Layout</option>
+            <option value="hierarchical">Hierarchical Layout</option>
+            "#,
+        );
+        layout_section.append_child(&layout_select)?;
+
+        // Reset layout button
+        let reset_layout_btn = document.create_element("button")?;
+        reset_layout_btn.set_inner_html("Reset");
+        reset_layout_btn.set_attribute("style", "padding: 4px 8px; border: 1px solid #ccc; border-radius: 4px; background: white; cursor: pointer;")?;
+        layout_section.append_child(&reset_layout_btn)?;
+
+        // Add all sections to the toolbar
+        toolbar.append_child(&interaction_section)?;
+        toolbar.append_child(&add_node_section)?;
+        toolbar.append_child(&layout_section)?;
+
+        // Append toolbar to container
         toolbar_container.append_child(&toolbar)?;
 
-        // Pointer button
-        {
-            let pointer_btn = document
-                .create_element("button")?
-                .dyn_into::<HtmlElement>()?;
-            pointer_btn.set_inner_html("Pointer");
-            pointer_btn.set_attribute("id", "btn-pointer")?;
-            // (Optionally) add styling such as margin or padding
-            toolbar.append_child(&pointer_btn)?;
-        }
+        // ===== EVENT HANDLERS =====
+
+        // Mode switching buttons (pointer, pan)
         {
             let graph_canvas_clone = graph_canvas.clone();
-            let pointer_btn = document
-                .get_element_by_id("btn-pointer")
-                .unwrap()
-                .dyn_into::<HtmlElement>()?;
+            let pointer_btn_clone = pointer_btn.clone();
+            let pan_btn_clone = pan_btn.clone();
+            let template_group_container_clone = template_group_container.clone();
+            let cancel_btn_clone = cancel_btn.clone();
+
+            // Pointer button click
             let pointer_click = Closure::wrap(Box::new(move |_event: web_sys::MouseEvent| {
-                // This resets the interaction state back to default (Select) mode.
+                // Switch to default mode
                 graph_canvas_clone.set_interaction_mode(InteractionMode::Default);
-                // You could also hide any extra UI related to other modes here if needed.
-                if let Some(select) = window()
-                    .unwrap()
-                    .document()
-                    .unwrap()
-                    .get_element_by_id("select-node-template")
-                {
-                    select.set_attribute("style", "display: none;").unwrap();
-                }
-                // Similarly, if the UI for canceling or other features is showing, hide them.
-                if let Some(cancel) = window()
-                    .unwrap()
-                    .document()
-                    .unwrap()
-                    .get_element_by_id("btn-cancel")
-                {
-                    cancel.set_attribute("style", "display: none;").unwrap();
-                }
+
+                // Update button styles
+                pointer_btn_clone
+                    .set_attribute("class", "toolbar-btn active")
+                    .unwrap();
+                pan_btn_clone.set_attribute("class", "toolbar-btn").unwrap();
+
+                // Hide add node UI
+                template_group_container_clone
+                    .set_attribute("style", "display: none;")
+                    .unwrap();
+                cancel_btn_clone
+                    .set_attribute("style", "display: none;")
+                    .unwrap();
             }) as Box<dyn FnMut(_)>);
+
             pointer_btn.add_event_listener_with_callback(
                 "click",
                 pointer_click.as_ref().unchecked_ref(),
@@ -334,67 +471,65 @@ impl GraphCanvas {
             pointer_click.forget();
         }
 
-        // Closure for entering Pan mode.
         {
             let graph_canvas_clone = graph_canvas.clone();
-            let pan_btn = document
-                .get_element_by_id("btn-pan")
-                .unwrap()
-                .dyn_into::<HtmlElement>()?;
+            let pointer_btn_clone = pointer_btn.clone();
+            let pan_btn_clone = pan_btn.clone();
+            let template_group_container_clone = template_group_container.clone();
+            let cancel_btn_clone = cancel_btn.clone();
+
+            // Pan button click
             let pan_click = Closure::wrap(Box::new(move |_event: web_sys::MouseEvent| {
-                // Switch the interaction mode to Pan.
+                // Switch to pan mode
                 graph_canvas_clone.set_interaction_mode(InteractionMode::Pan);
-                // Optionally hide the node select dropdown and cancel button.
-                if let Some(select) = window()
-                    .unwrap()
-                    .document()
-                    .unwrap()
-                    .get_element_by_id("select-node-template")
-                {
-                    select.set_attribute("style", "display: none;").unwrap();
-                }
-                if let Some(cancel) = window()
-                    .unwrap()
-                    .document()
-                    .unwrap()
-                    .get_element_by_id("btn-cancel")
-                {
-                    cancel.set_attribute("style", "display: none;").unwrap();
-                }
+
+                // Update button styles
+                pointer_btn_clone
+                    .set_attribute("class", "toolbar-btn")
+                    .unwrap();
+                pan_btn_clone
+                    .set_attribute("class", "toolbar-btn active")
+                    .unwrap();
+
+                // Hide add node UI
+                template_group_container_clone
+                    .set_attribute("style", "display: none;")
+                    .unwrap();
+                cancel_btn_clone
+                    .set_attribute("style", "display: none;")
+                    .unwrap();
             }) as Box<dyn FnMut(_)>);
+
             pan_btn
                 .add_event_listener_with_callback("click", pan_click.as_ref().unchecked_ref())?;
             pan_click.forget();
         }
 
-        // Closure for entering AddNode mode.
+        // Add Node button - toggle template group container
         {
             let graph_canvas_clone = graph_canvas.clone();
-            let add_node_btn = document
-                .get_element_by_id("btn-add-node")
-                .unwrap()
-                .dyn_into::<HtmlElement>()?;
+            let pointer_btn_clone = pointer_btn.clone();
+            let pan_btn_clone = pan_btn.clone();
+            let template_group_container_clone = template_group_container.clone();
+            let cancel_btn_clone = cancel_btn.clone();
+
             let add_node_click = Closure::wrap(Box::new(move |_event: web_sys::MouseEvent| {
-                // Switch to AddNode mode.
+                // Switch to add node mode
                 graph_canvas_clone.set_interaction_mode(InteractionMode::AddNode);
-                // Show the dropdown and cancel button so the user can choose the node template and exit AddNode mode.
-                if let Some(select) = window()
-                    .unwrap()
-                    .document()
-                    .unwrap()
-                    .get_element_by_id("select-node-template")
-                {
-                    select.set_attribute("style", "display: block;").unwrap();
-                }
-                if let Some(cancel) = window()
-                    .unwrap()
-                    .document()
-                    .unwrap()
-                    .get_element_by_id("btn-cancel")
-                {
-                    cancel.set_attribute("style", "display: block;").unwrap();
-                }
+
+                // Update button styles
+                pointer_btn_clone
+                    .set_attribute("class", "toolbar-btn")
+                    .unwrap();
+                pan_btn_clone.set_attribute("class", "toolbar-btn").unwrap();
+
+                // Show template selection UI
+                template_group_container_clone.set_attribute("style",
+                    "display: block; position: absolute; top: 40px; left: 160px; background: white; border: 1px solid #ccc; border-radius: 4px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); z-index: 100; min-width: 200px; padding: 8px;"
+                ).unwrap();
+                cancel_btn_clone.set_attribute("style", "display: inline-block; padding: 4px 8px; border: 1px solid #ccc; border-radius: 4px; background: white; cursor: pointer;").unwrap();
             }) as Box<dyn FnMut(_)>);
+
             add_node_btn.add_event_listener_with_callback(
                 "click",
                 add_node_click.as_ref().unchecked_ref(),
@@ -402,80 +537,129 @@ impl GraphCanvas {
             add_node_click.forget();
         }
 
-        // Closure for canceling AddNode mode and returning to Select mode.
+        // Cancel button
         {
             let graph_canvas_clone = graph_canvas.clone();
-            let cancel_btn = document
-                .get_element_by_id("btn-cancel")
-                .unwrap()
-                .dyn_into::<HtmlElement>()?;
+            let pointer_btn_clone = pointer_btn.clone();
+            let template_group_container_clone = template_group_container.clone();
+            let cancel_btn_clone = cancel_btn.clone();
+
             let cancel_click = Closure::wrap(Box::new(move |_event: web_sys::MouseEvent| {
-                // Switch back to default, e.g., select mode.
+                // Switch back to default mode
                 graph_canvas_clone.set_interaction_mode(InteractionMode::Default);
-                // Hide the dropdown and cancel button again.
-                if let Some(select) = window()
-                    .unwrap()
-                    .document()
-                    .unwrap()
-                    .get_element_by_id("select-node-template")
-                {
-                    select.set_attribute("style", "display: none;").unwrap();
-                }
-                if let Some(cancel) = window()
-                    .unwrap()
-                    .document()
-                    .unwrap()
-                    .get_element_by_id("btn-cancel")
-                {
-                    cancel.set_attribute("style", "display: none;").unwrap();
-                }
+
+                // Update button styles
+                pointer_btn_clone
+                    .set_attribute("class", "toolbar-btn active")
+                    .unwrap();
+
+                // Hide template UI
+                template_group_container_clone
+                    .set_attribute("style", "display: none;")
+                    .unwrap();
+                cancel_btn_clone
+                    .set_attribute("style", "display: none;")
+                    .unwrap();
             }) as Box<dyn FnMut(_)>);
+
             cancel_btn
                 .add_event_listener_with_callback("click", cancel_click.as_ref().unchecked_ref())?;
             cancel_click.forget();
         }
 
-        // Optionally: You can also attach an event listener on the dropdown to update the current node selection
-        {
-            let graph_canvas_clone = graph_canvas.clone();
-            let select_node = document
-                .get_element_by_id("select-node-template")
+        // Tab button click handlers
+        let tab_buttons = template_group_container.query_selector_all(".tab-button")?;
+        for i in 0..tab_buttons.length() {
+            let tab_button = tab_buttons
+                .get(i)
                 .unwrap()
-                .dyn_into::<web_sys::HtmlSelectElement>()?;
-            let select_node_clone = select_node.clone();
-            let select_change = Closure::wrap(Box::new(move |_event: web_sys::Event| {
-                let value = select_node_clone.value();
-                // Update the interaction state with the selected node template.
-                graph_canvas_clone.set_current_node_template(&value);
+                .dyn_into::<web_sys::HtmlElement>()?;
+            let tab_button_clone = tab_button.clone();
+            let template_group_container_clone = template_group_container.clone();
+
+            let tab_click = Closure::wrap(Box::new(move |_event: web_sys::MouseEvent| {
+                let group_id = tab_button_clone.get_attribute("data-group-id").unwrap();
+
+                // Update active tab button
+                let tab_buttons = template_group_container_clone
+                    .query_selector_all(".tab-button")
+                    .unwrap();
+                for j in 0..tab_buttons.length() {
+                    let button = tab_buttons
+                        .get(j)
+                        .unwrap()
+                        .dyn_into::<web_sys::HtmlElement>()
+                        .unwrap();
+                    button.set_attribute("class", "tab-button").unwrap();
+                    button
+                        .style()
+                        .set_property("background", "transparent")
+                        .unwrap();
+                }
+                tab_button_clone
+                    .set_attribute("class", "tab-button active")
+                    .unwrap();
+                tab_button_clone
+                    .style()
+                    .set_property("background", "#f0f0f0")
+                    .unwrap();
+
+                // Show corresponding content container
+                let content_containers = template_group_container_clone
+                    .query_selector_all(".template-group-content")
+                    .unwrap();
+                for j in 0..content_containers.length() {
+                    let container = content_containers
+                        .get(j)
+                        .unwrap()
+                        .dyn_into::<web_sys::HtmlElement>()
+                        .unwrap();
+                    let container_group_id = container.get_attribute("data-group-id").unwrap();
+
+                    if container_group_id == group_id {
+                        container.style().set_property("display", "flex").unwrap();
+                    } else {
+                        container.style().set_property("display", "none").unwrap();
+                    }
+                }
             }) as Box<dyn FnMut(_)>);
-            select_node.add_event_listener_with_callback(
-                "change",
-                select_change.as_ref().unchecked_ref(),
-            )?;
-            select_change.forget();
+
+            tab_button
+                .add_event_listener_with_callback("click", tab_click.as_ref().unchecked_ref())?;
+            tab_click.forget();
         }
 
-        // Add layout controls
-        let layout_controls = document.create_element("div")?;
+        // Template button click handlers
+        let template_buttons = template_group_container.query_selector_all(".template-button")?;
+        for i in 0..template_buttons.length() {
+            let template_button = template_buttons
+                .get(i)
+                .unwrap()
+                .dyn_into::<web_sys::HtmlElement>()?;
+            let template_button_clone = template_button.clone();
+            let graph_canvas_clone = graph_canvas.clone();
+            let template_group_container_clone = template_group_container.clone();
 
-        // Add layout type selector
-        let layout_select = document.create_element("select")?;
-        layout_select.set_inner_html(
-            r#"
-            <option value="free">Free Layout</option>
-            <option value="hierarchical">Hierarchical Layout</option>
-        "#,
-        );
+            let template_click = Closure::wrap(Box::new(move |_event: web_sys::MouseEvent| {
+                let template_name = template_button_clone
+                    .get_attribute("data-template-name")
+                    .unwrap();
 
-        // Add reset button
-        let reset_layout_btn = document.create_element("button")?;
-        reset_layout_btn.set_inner_html("Reset Layout");
+                // Set the selected template
+                graph_canvas_clone.set_current_node_template(&template_name);
 
-        layout_controls.append_child(&layout_select)?;
-        layout_controls.append_child(&reset_layout_btn)?;
-        toolbar.append_child(&layout_controls)?;
+                // Keep the template selection UI open so user can continue adding nodes
+                // Optional: could close it here if preferred
+            }) as Box<dyn FnMut(_)>);
 
-        // Add event handlers
+            template_button.add_event_listener_with_callback(
+                "click",
+                template_click.as_ref().unchecked_ref(),
+            )?;
+            template_click.forget();
+        }
+
+        // Layout controls
         {
             let graph_canvas_clone = graph_canvas.clone();
             let on_layout_change = Closure::wrap(Box::new(move |event: web_sys::Event| {
@@ -493,6 +677,7 @@ impl GraphCanvas {
                 let mut graph = graph_canvas_clone.graph.lock().unwrap();
                 layout_engine.switch_layout(layout_type, &mut graph);
             }) as Box<dyn FnMut(_)>);
+
             layout_select.add_event_listener_with_callback(
                 "change",
                 on_layout_change.as_ref().unchecked_ref(),
@@ -508,10 +693,12 @@ impl GraphCanvas {
                 let mut ix = graph_canvas_clone.interaction.lock().unwrap();
                 layout_engine.reset_current_layout(&mut graph, &mut ix);
             }) as Box<dyn FnMut(_)>);
+
             reset_layout_btn
                 .add_event_listener_with_callback("click", on_reset.as_ref().unchecked_ref())?;
             on_reset.forget();
         }
+
         Ok(())
     }
 

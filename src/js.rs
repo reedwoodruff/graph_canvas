@@ -1,8 +1,30 @@
 use crate::common::generate_id;
-use crate::config::{GraphCanvasConfig, InitialConnection, InitialNode};
+use crate::config::{GraphCanvasConfig, InitialConnection, InitialNode, TemplateGroup};
 use crate::graph::{NodeTemplate, SlotPosition, SlotTemplate, SlotType};
 use serde::{Deserialize, Serialize};
 use tsify::Tsify;
+
+#[cfg(feature = "js")]
+#[derive(Serialize, Deserialize, Tsify)]
+#[tsify(into_wasm_abi, from_wasm_abi)]
+pub struct JsTemplateGroup {
+    pub id: String,
+    pub name: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+    pub templates: Vec<String>, // template IDs
+}
+
+impl From<JsTemplateGroup> for TemplateGroup {
+    fn from(js_group: JsTemplateGroup) -> Self {
+        Self {
+            id: js_group.id,
+            name: js_group.name,
+            description: js_group.description,
+            templates: js_group.templates,
+        }
+    }
+}
 
 #[cfg(feature = "js")]
 #[derive(Serialize, Deserialize, Tsify)]
@@ -20,6 +42,8 @@ pub struct JsPartialConfig {
     pub slot_radius: Option<f64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub node_templates: Option<Vec<JsPartialNodeTemplate>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub template_groups: Option<Vec<JsTemplateGroup>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub initial_nodes: Option<Vec<JsPartialInitialNode>>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -55,6 +79,12 @@ impl From<JsPartialConfig> for GraphCanvasConfig {
             node_templates: partial
                 .node_templates
                 .unwrap_or(Default::default())
+                .into_iter()
+                .map(Into::into)
+                .collect(),
+            template_groups: partial
+                .template_groups
+                .unwrap_or_default()
                 .into_iter()
                 .map(Into::into)
                 .collect(),

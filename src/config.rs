@@ -1,4 +1,24 @@
 use crate::graph::NodeTemplate;
+use std::collections::{HashMap, HashSet};
+
+#[derive(Clone, Debug)]
+pub struct TemplateGroup {
+    pub id: String,
+    pub name: String,
+    pub description: Option<String>,
+    pub templates: Vec<String>, // template_ids
+}
+
+impl TemplateGroup {
+    pub fn new(id: &str, name: &str) -> Self {
+        Self {
+            id: id.to_string(),
+            name: name.to_string(),
+            description: None,
+            templates: Vec::new(),
+        }
+    }
+}
 
 #[derive(Clone, Debug)]
 pub struct GraphCanvasConfig {
@@ -11,6 +31,7 @@ pub struct GraphCanvasConfig {
 
     // Templates and initial state
     pub node_templates: Vec<NodeTemplate>,
+    pub template_groups: Vec<TemplateGroup>,
     pub initial_nodes: Vec<InitialNode>,
 
     // Behavioral settings
@@ -30,6 +51,7 @@ impl GraphCanvasConfig {
             connection_control_point_distance: 75.0,
             slot_radius: 12.0,
             node_templates: Vec::new(),
+            template_groups: Vec::new(),
             initial_nodes: Vec::new(),
             show_default_toolbar: true,
             snap_to_grid: false,
@@ -37,6 +59,66 @@ impl GraphCanvasConfig {
             is_mutable: true,
             is_movable: true,
         }
+    }
+
+    pub fn add_template_to_group(&mut self, template_id: &str, group_id: &str) -> bool {
+        if let Some(group) = self.template_groups.iter_mut().find(|g| g.id == group_id) {
+            if !group.templates.contains(&template_id.to_string()) {
+                group.templates.push(template_id.to_string());
+                return true;
+            }
+        }
+        false
+    }
+
+    pub fn get_templates_by_group(&self, group_id: &str) -> Vec<&NodeTemplate> {
+        if let Some(group) = self.template_groups.iter().find(|g| g.id == group_id) {
+            return self
+                .node_templates
+                .iter()
+                .filter(|template| group.templates.contains(&template.template_id))
+                .collect();
+        }
+        Vec::new()
+    }
+
+    pub fn get_template_group_map(&self) -> HashMap<String, Vec<&NodeTemplate>> {
+        let mut result = HashMap::new();
+
+        // Create a "default" group for unassigned templates
+        let mut assigned_template_ids = HashSet::new();
+
+        // First, populate all explicitly defined groups
+        for group in &self.template_groups {
+            let templates = self
+                .node_templates
+                .iter()
+                .filter(|template| group.templates.contains(&template.name))
+                .collect::<Vec<_>>();
+
+            for template in &templates {
+                assigned_template_ids.insert(template.template_id.clone());
+            }
+
+            if !templates.is_empty() {
+                result.insert(group.id.clone(), templates);
+            }
+        }
+
+        // Then add "Other" group with unassigned templates
+        let other_templates = self
+            .node_templates
+            .iter()
+            .filter(|template| {
+                !assigned_template_ids.contains(&template.template_id) && template.can_create
+            })
+            .collect::<Vec<_>>();
+
+        if !other_templates.is_empty() {
+            result.insert("other".to_string(), other_templates);
+        }
+
+        result
     }
 }
 
