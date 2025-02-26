@@ -51,8 +51,20 @@
                                     max_connections: 5,
                                 },
                             ],
+                            field_templates: [
+                                {
+                                    name: "Enabled",
+                                    field_type: "Boolean",
+                                    default_value: "true"
+                                },
+                                {
+                                    name: "Name",
+                                    field_type: "String",
+                                    default_value: "Default"
+                                }
+                            ],
                             default_width: 150,
-                            default_height: 100,
+                            default_height: 120,
                         },
                         {
                             name: "Math Node",
@@ -82,8 +94,20 @@
                                     max_connections: 1,
                                 },
                             ],
+                            field_templates: [
+                                {
+                                    name: "Operation",
+                                    field_type: "String",
+                                    default_value: "Add"
+                                },
+                                {
+                                    name: "Multiplier",
+                                    field_type: "Integer",
+                                    default_value: "1"
+                                }
+                            ],
                             default_width: 150,
-                            default_height: 120,
+                            default_height: 140,
                         },
                         {
                             name: "Logic Node",

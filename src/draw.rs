@@ -4,12 +4,15 @@ use web_sys::{window, CanvasRenderingContext2d};
 
 use crate::{
     errors::GraphError,
-    graph::{Connection, Graph, NodeInstance, SlotInstance, SlotPosition, SlotTemplate, SlotType},
+    graph::{
+        Connection, FieldType, Graph, NodeInstance, SlotInstance, SlotPosition, SlotTemplate,
+        SlotType,
+    },
     interaction::{
         ContextMenu, ContextMenuAction, ContextMenuItem, ContextMenuTarget, InteractionState,
         Rectangle,
     },
-    GraphCanvas,
+    log, GraphCanvas,
 };
 
 /// Rendering
@@ -108,7 +111,7 @@ impl GraphCanvas {
         const TITLE_HEIGHT: f64 = 25.0;
 
         // Get menu items based on target type
-        let mut items = self.get_context_menu_items(&menu.target_type)?;
+        let mut items = self.get_context_menu_items(&menu.target_type, graph)?;
         let title = menu.target_type.get_title(graph);
 
         let menu_height = TITLE_HEIGHT + (items.len() as f64 * ITEM_HEIGHT) + (PADDING * 2.0);
@@ -227,11 +230,17 @@ impl GraphCanvas {
         let center_y = instance.y + instance.height / 2.0;
         let radius = (instance.width.min(instance.height) / 2.0) - 2.0; // Slightly smaller to account for stroke
 
-        // Hover effect
-        let is_hovered = ix.hovered_node.as_ref() == Some(&instance.instance_id);
-        if is_hovered {
+        // Selected Effect
+        if ix.currently_selected_node_instance.as_ref() == Some(&instance.instance_id) {
+            context.set_shadow_color("green");
+            context.set_shadow_blur(20.0);
+            context.set_shadow_offset_x(0.0);
+            context.set_shadow_offset_y(0.0);
+        }
+        // Shadow Effect
+        else if ix.hovered_node.as_ref() == Some(&instance.instance_id) {
             // Add shadow effect when hovered
-            context.set_shadow_color("#666666");
+            context.set_shadow_color("blue");
             context.set_shadow_blur(10.0);
             context.set_shadow_offset_x(0.0);
             context.set_shadow_offset_y(0.0);
@@ -249,11 +258,40 @@ impl GraphCanvas {
         context.set_shadow_color("transparent");
         context.set_shadow_blur(0.0);
 
-        // Draw node title
+        // Draw node title - move it up to make room for fields
         context.set_font("16px Arial");
         context.set_text_align("center");
         context.set_fill_style_str("#000000");
-        context.fill_text(&template.name, center_x, center_y)?;
+
+        // Adjust y position based on number of fields (if any)
+        let title_y = if !instance.fields.is_empty() {
+            center_y - (instance.fields.len() as f64 * 15.0) / 2.0 - 10.0
+        } else {
+            center_y
+        };
+
+        context.fill_text(&template.name, center_x, title_y)?;
+
+        // Draw fields below the title
+        if !instance.fields.is_empty() {
+            context.set_font("12px Arial");
+            context.set_text_align("center");
+
+            let mut y_offset = title_y + 20.0; // Start below the title
+
+            for field_instance in &instance.fields {
+                // Get the field template to access name and type
+                if let Some(field_template) = template
+                    .field_templates
+                    .iter()
+                    .find(|ft| ft.id == field_instance.field_template_id)
+                {
+                    let field_text = format!("{}: {}", field_template.name, field_instance.value);
+                    context.fill_text(&field_text, center_x, y_offset)?;
+                    y_offset += 15.0; // Move down for next field
+                }
+            }
+        }
 
         // Calculate slot positions and draw them
         let slot_positions = self.calculate_slot_positions(instance, graph);
@@ -1051,6 +1089,7 @@ impl GraphCanvas {
     pub fn get_context_menu_items(
         &self,
         target: &ContextMenuTarget,
+        graph: &Graph,
     ) -> Result<Vec<ContextMenuItem>, JsValue> {
         match target {
             ContextMenuTarget::Node(_) => Ok(vec![ContextMenuItem {
@@ -1071,6 +1110,90 @@ impl GraphCanvas {
                 color: "#ff0000".to_string(),
                 bounds: None,
             }]),
+            ContextMenuTarget::Field {
+                node_id,
+                field_template_id,
+            } => {
+                // Get the field template to determine its type
+                let node = graph
+                    .node_instances
+                    .get(node_id)
+                    .ok_or_else(|| JsValue::from_str("Node not found"))?;
+                let template = graph
+                    .node_templates
+                    .get(&node.template_id)
+                    .ok_or_else(|| JsValue::from_str("Template not found"))?;
+                let field_template = template
+                    .field_templates
+                    .iter()
+                    .find(|ft| ft.id == *field_template_id)
+                    .ok_or_else(|| JsValue::from_str("Field template not found"))?;
+
+                let field_instance = node
+                    .fields
+                    .iter()
+                    .find(|f| f.field_template_id == *field_template_id)
+                    .ok_or_else(|| JsValue::from_str("Field not found"))?;
+
+                // Return different menu items based on field type
+                match field_template.field_type {
+                    FieldType::Boolean => Ok(vec![
+                        ContextMenuItem {
+                            label: "Set True".to_string(),
+                            action: ContextMenuAction::SetBooleanField(true),
+                            color: "#0077ff".to_string(),
+                            bounds: None,
+                        },
+                        ContextMenuItem {
+                            label: "Set False".to_string(),
+                            action: ContextMenuAction::SetBooleanField(false),
+                            color: "#0077ff".to_string(),
+                            bounds: None,
+                        },
+                    ]),
+                    FieldType::Integer => {
+                        // For integers, we provide some increment/decrement options
+                        let current_value = field_instance.value.parse::<i32>().unwrap_or(0);
+                        Ok(vec![
+                            ContextMenuItem {
+                                label: format!("Current: {}", current_value),
+                                action: ContextMenuAction::EditField,
+                                color: "#444444".to_string(),
+                                bounds: None,
+                            },
+                            ContextMenuItem {
+                                label: format!("Increment (+1)"),
+                                action: ContextMenuAction::SetIntegerField(current_value + 1),
+                                color: "#0077ff".to_string(),
+                                bounds: None,
+                            },
+                            ContextMenuItem {
+                                label: format!("Decrement (-1)"),
+                                action: ContextMenuAction::SetIntegerField(current_value - 1),
+                                color: "#0077ff".to_string(),
+                                bounds: None,
+                            },
+                        ])
+                    }
+                    FieldType::String => {
+                        // For strings we just show the current value and edit option
+                        Ok(vec![
+                            ContextMenuItem {
+                                label: format!("Current: {}", field_instance.value),
+                                action: ContextMenuAction::EditField,
+                                color: "#444444".to_string(),
+                                bounds: None,
+                            },
+                            // ContextMenuItem {
+                            //     label: "Edit Text".to_string(),
+                            //     action: ContextMenuAction::EditField,
+                            //     color: "#0077ff".to_string(),
+                            //     bounds: None,
+                            // },
+                        ])
+                    }
+                }
+            }
         }
     }
 

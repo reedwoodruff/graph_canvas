@@ -7,7 +7,7 @@ use layout::{LayoutEngine, LayoutType};
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use wasm_bindgen::{prelude::*, JsCast};
-use web_sys::{window, HtmlCanvasElement, HtmlDivElement, HtmlElement};
+use web_sys::{window, HtmlCanvasElement, HtmlDivElement};
 
 mod common;
 mod config;
@@ -26,6 +26,8 @@ pub use config::InitialConnection;
 pub use config::InitialNode;
 pub use config::TemplateGroup;
 pub use graph::Connection;
+pub use graph::FieldTemplate;
+pub use graph::FieldType;
 pub use graph::NodeTemplate;
 pub use graph::SlotPosition;
 pub use graph::SlotTemplate;
@@ -241,6 +243,13 @@ impl GraphCanvas {
             "display: flex; gap: 6px; align-items: center; margin-left: 10px;",
         )?;
 
+        let field_editor_section = document.create_element("div")?;
+        field_editor_section.set_attribute("id", "field-editor-section")?;
+        field_editor_section.set_attribute(
+            "style",
+            "display: none; gap: 8px; align-items: center; margin-left: 10px; padding: 4px 8px; border: 1px solid #eee; border-radius: 4px; background-color: #fff;",
+        )?;
+
         let layout_section = document.create_element("div")?;
         layout_section.set_attribute(
             "style",
@@ -270,6 +279,22 @@ impl GraphCanvas {
         pan_btn.set_attribute("class", "toolbar-btn")?;
         pan_btn.set_attribute("style", "padding: 4px 8px; border: 1px solid #ccc; border-radius: 4px; background: white; cursor: pointer;")?;
         interaction_section.append_child(&pan_btn)?;
+
+        // === FIELD EDITOR SECTION ===
+
+        // Create field editor title
+        let field_editor_title = document.create_element("span")?;
+        field_editor_title.set_attribute("id", "field-editor-title")?;
+        field_editor_title.set_attribute("style", "font-size: 12px; font-weight: bold;")?;
+        field_editor_title.set_inner_html("Node Fields");
+        field_editor_section.append_child(&field_editor_title)?;
+
+        // Create field editor container (will be dynamically populated)
+        let field_editor_container = document.create_element("div")?;
+        field_editor_container.set_attribute("id", "field-editor-container")?;
+        field_editor_container
+            .set_attribute("style", "display: flex; flex-direction: column; gap: 6px;")?;
+        field_editor_section.append_child(&field_editor_container)?;
 
         // === ADD NODE SECTION ===
 
@@ -429,6 +454,7 @@ impl GraphCanvas {
         // Add all sections to the toolbar
         toolbar.append_child(&interaction_section)?;
         toolbar.append_child(&add_node_section)?;
+        toolbar.append_child(&field_editor_section)?; // Add the field editor section
         toolbar.append_child(&layout_section)?;
 
         // Append toolbar to container
@@ -699,6 +725,298 @@ impl GraphCanvas {
             on_reset.forget();
         }
 
+        // Setup custom event listener for node selection to show field editor
+        let document_clone = document.clone();
+        let field_editor_section_clone = field_editor_section
+            .clone()
+            .dyn_into::<web_sys::HtmlDivElement>()?;
+        let field_editor_container_clone = field_editor_container.clone();
+        let graph_canvas_clone = graph_canvas.clone();
+
+        // Custom event handler for node selection
+        let node_selection_handler = Closure::wrap(Box::new(move |event: web_sys::MouseEvent| {
+            let graph = graph_canvas_clone.graph.lock().unwrap();
+            let interaction = graph_canvas_clone.interaction.lock().unwrap();
+
+            // Check if a node is selected (clicked on)
+            if let Some(selected_node_id) = &interaction.click_initiated_on_node {
+                if let Some(node_instance) = graph.node_instances.get(selected_node_id) {
+                    if !node_instance.fields.is_empty() {
+                        // Get the node template to access field templates
+                        if let Some(node_template) =
+                            graph.node_templates.get(&node_instance.template_id)
+                        {
+                            // Show the field editor section
+                            field_editor_section_clone
+                                .style()
+                                .set_property("display", "flex")
+                                .unwrap();
+
+                            // Set the title with node name
+                            let title_elem = document_clone
+                                .get_element_by_id("field-editor-title")
+                                .unwrap();
+                            title_elem.set_inner_html(&format!("{} Fields:", node_template.name));
+
+                            // Clear existing fields
+                            field_editor_container_clone.set_inner_html("");
+
+                            // Create field editor UI for each field
+                            for field_instance in &node_instance.fields {
+                                // Get the corresponding field template
+                                if let Some(field_template) = node_template
+                                    .field_templates
+                                    .iter()
+                                    .find(|ft| ft.id == field_instance.field_template_id)
+                                {
+                                    // Create field container
+                                    let field_container =
+                                        document_clone.create_element("div").unwrap();
+                                    field_container
+                                        .set_attribute(
+                                            "style",
+                                            "display: flex; align-items: center; gap: 6px;",
+                                        )
+                                        .unwrap();
+
+                                    // Create field label
+                                    let field_label =
+                                        document_clone.create_element("label").unwrap();
+                                    field_label
+                                        .set_inner_html(&format!("{}:", field_template.name));
+                                    field_label
+                                        .set_attribute("style", "min-width: 70px; font-size: 12px;")
+                                        .unwrap();
+                                    field_container.append_child(&field_label).unwrap();
+
+                                    // Create field input based on type
+                                    match field_template.field_type {
+                                        FieldType::Boolean => {
+                                            let checkbox =
+                                                document_clone.create_element("input").unwrap();
+                                            checkbox.set_attribute("type", "checkbox").unwrap();
+                                            checkbox
+                                                .set_attribute(
+                                                    "data-field-id",
+                                                    &field_instance.field_template_id,
+                                                )
+                                                .unwrap();
+                                            checkbox
+                                                .set_attribute("data-node-id", selected_node_id)
+                                                .unwrap();
+
+                                            if field_instance.value == "true" {
+                                                checkbox
+                                                    .dyn_ref::<web_sys::HtmlInputElement>()
+                                                    .unwrap()
+                                                    .set_checked(true);
+                                            }
+
+                                            // Add change event listener
+                                            let graph_canvas_clone2 = graph_canvas_clone.clone();
+                                            let field_id = field_instance.field_template_id.clone();
+                                            let node_id = selected_node_id.clone();
+
+                                            let change_callback = Closure::wrap(Box::new(
+                                                move |event: web_sys::Event| {
+                                                    let checked = event
+                                                        .target()
+                                                        .unwrap()
+                                                        .dyn_into::<web_sys::HtmlInputElement>()
+                                                        .unwrap()
+                                                        .checked();
+
+                                                    let mut graph =
+                                                        graph_canvas_clone2.graph.lock().unwrap();
+                                                    let events =
+                                                        graph_canvas_clone2.events.lock().unwrap();
+
+                                                    // Update the field value
+                                                    graph.execute_command(
+                                                    crate::graph::GraphCommand::UpdateField {
+                                                        node_id: node_id.clone(),
+                                                        field_template_id: field_id.clone(),
+                                                        new_value: if checked { "true".to_string() } else { "false".to_string() },
+                                                    },
+                                                    &events,
+                                                ).unwrap_or_else(|_| log("Failed to update boolean field"));
+                                                },
+                                            )
+                                                as Box<dyn FnMut(_)>);
+
+                                            checkbox
+                                                .add_event_listener_with_callback(
+                                                    "change",
+                                                    change_callback.as_ref().unchecked_ref(),
+                                                )
+                                                .unwrap();
+                                            change_callback.forget();
+
+                                            field_container.append_child(&checkbox).unwrap();
+                                        }
+                                        FieldType::Integer => {
+                                            let number_input =
+                                                document_clone.create_element("input").unwrap();
+                                            number_input.set_attribute("type", "number").unwrap();
+                                            number_input
+                                                .set_attribute("value", &field_instance.value)
+                                                .unwrap();
+                                            number_input
+                                                .set_attribute(
+                                                    "data-field-id",
+                                                    &field_instance.field_template_id,
+                                                )
+                                                .unwrap();
+                                            number_input
+                                                .set_attribute("data-node-id", selected_node_id)
+                                                .unwrap();
+                                            number_input
+                                                .set_attribute("style", "width: 60px;")
+                                                .unwrap();
+
+                                            // Add change event listener
+                                            let graph_canvas_clone2 = graph_canvas_clone.clone();
+                                            let field_id = field_instance.field_template_id.clone();
+                                            let node_id = selected_node_id.clone();
+
+                                            let change_callback = Closure::wrap(Box::new(
+                                                move |event: web_sys::Event| {
+                                                    let value = event
+                                                        .target()
+                                                        .unwrap()
+                                                        .dyn_into::<web_sys::HtmlInputElement>()
+                                                        .unwrap()
+                                                        .value();
+
+                                                    let mut graph =
+                                                        graph_canvas_clone2.graph.lock().unwrap();
+                                                    let events =
+                                                        graph_canvas_clone2.events.lock().unwrap();
+
+                                                    // Update the field value
+                                                    graph.execute_command(
+                                                    crate::graph::GraphCommand::UpdateField {
+                                                        node_id: node_id.clone(),
+                                                        field_template_id: field_id.clone(),
+                                                        new_value: value,
+                                                    },
+                                                    &events,
+                                                ).unwrap_or_else(|_| log("Failed to update integer field"));
+                                                },
+                                            )
+                                                as Box<dyn FnMut(_)>);
+
+                                            number_input
+                                                .add_event_listener_with_callback(
+                                                    "change",
+                                                    change_callback.as_ref().unchecked_ref(),
+                                                )
+                                                .unwrap();
+                                            change_callback.forget();
+
+                                            field_container.append_child(&number_input).unwrap();
+                                        }
+                                        FieldType::String => {
+                                            let text_input =
+                                                document_clone.create_element("input").unwrap();
+                                            text_input.set_attribute("type", "text").unwrap();
+                                            text_input
+                                                .set_attribute("value", &field_instance.value)
+                                                .unwrap();
+                                            text_input
+                                                .set_attribute(
+                                                    "data-field-id",
+                                                    &field_instance.field_template_id,
+                                                )
+                                                .unwrap();
+                                            text_input
+                                                .set_attribute("data-node-id", selected_node_id)
+                                                .unwrap();
+                                            text_input
+                                                .set_attribute("style", "width: 120px;")
+                                                .unwrap();
+
+                                            // Add change event listener
+                                            let graph_canvas_clone2 = graph_canvas_clone.clone();
+                                            let field_id = field_instance.field_template_id.clone();
+                                            let node_id = selected_node_id.clone();
+
+                                            let change_callback = Closure::wrap(Box::new(
+                                                move |event: web_sys::Event| {
+                                                    let value = event
+                                                        .target()
+                                                        .unwrap()
+                                                        .dyn_into::<web_sys::HtmlInputElement>()
+                                                        .unwrap()
+                                                        .value();
+
+                                                    let mut graph =
+                                                        graph_canvas_clone2.graph.lock().unwrap();
+                                                    let events =
+                                                        graph_canvas_clone2.events.lock().unwrap();
+
+                                                    // Update the field value
+                                                    graph.execute_command(
+                                                    crate::graph::GraphCommand::UpdateField {
+                                                        node_id: node_id.clone(),
+                                                        field_template_id: field_id.clone(),
+                                                        new_value: value,
+                                                    },
+                                                    &events,
+                                                ).unwrap_or_else(|_| log("Failed to update string field"));
+                                                },
+                                            )
+                                                as Box<dyn FnMut(_)>);
+
+                                            text_input
+                                                .add_event_listener_with_callback(
+                                                    "change",
+                                                    change_callback.as_ref().unchecked_ref(),
+                                                )
+                                                .unwrap();
+                                            change_callback.forget();
+
+                                            field_container.append_child(&text_input).unwrap();
+                                        }
+                                    }
+
+                                    // Add field container to the editor
+                                    field_editor_container_clone
+                                        .append_child(&field_container)
+                                        .unwrap();
+                                }
+                            }
+                        }
+                    } else {
+                        // Hide field editor if no fields
+                        field_editor_section_clone
+                            .style()
+                            .set_property("display", "none")
+                            .unwrap();
+                    }
+                } else {
+                    // Hide field editor if node not found
+                    field_editor_section_clone
+                        .style()
+                        .set_property("display", "none")
+                        .unwrap();
+                }
+            } else {
+                // Hide field editor if no node selected
+                field_editor_section_clone
+                    .style()
+                    .set_property("display", "none")
+                    .unwrap();
+            }
+        }) as Box<dyn FnMut(_)>);
+
+        // Attach the handler to the canvas's mouseup event
+        graph_canvas.canvas.add_event_listener_with_callback(
+            "mouseup",
+            node_selection_handler.as_ref().unchecked_ref(),
+        )?;
+        node_selection_handler.forget();
+
         Ok(())
     }
 
@@ -862,8 +1180,30 @@ impl GraphCanvas {
                     can_modify_connections: true,
                 },
             ],
+            // Add field templates for testing
+            field_templates: vec![
+                FieldTemplate {
+                    id: "bool_field".to_string(),
+                    name: "Active".to_string(),
+                    field_type: FieldType::Boolean,
+                    default_value: "true".to_string(),
+                },
+                FieldTemplate {
+                    id: "int_field".to_string(),
+                    name: "Count".to_string(),
+                    field_type: FieldType::Integer,
+                    default_value: "42".to_string(),
+                },
+                FieldTemplate {
+                    id: "string_field".to_string(),
+                    name: "Label".to_string(),
+                    field_type: FieldType::String,
+                    default_value: "Test".to_string(),
+                },
+            ],
             default_width: 150.0,
-            default_height: 100.0,
+            default_height: 130.0, // Increased height to fit fields
+            can_modify_fields: true,
         }
     }
 }

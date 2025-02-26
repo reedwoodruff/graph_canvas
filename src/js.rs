@@ -1,6 +1,6 @@
 use crate::common::generate_id;
 use crate::config::{GraphCanvasConfig, InitialConnection, InitialNode, TemplateGroup};
-use crate::graph::{NodeTemplate, SlotPosition, SlotTemplate, SlotType};
+use crate::graph::{FieldTemplate, FieldType, NodeTemplate, SlotPosition, SlotTemplate, SlotType};
 use serde::{Deserialize, Serialize};
 use tsify::Tsify;
 
@@ -160,6 +160,37 @@ impl From<String> for SlotType {
     }
 }
 
+impl From<String> for FieldType {
+    fn from(value: String) -> Self {
+        match value.as_str() {
+            "Boolean" | "bool" | "boolean" => FieldType::Boolean,
+            "Integer" | "int" | "integer" => FieldType::Integer,
+            "String" | "string" | "text" => FieldType::String,
+            _ => FieldType::String, // Default to string for unknown types
+        }
+    }
+}
+
+#[derive(Serialize, Deserialize, Tsify)]
+#[tsify(into_wasm_abi, from_wasm_abi)]
+pub struct JsPartialFieldTemplate {
+    // Required fields
+    pub name: String,
+    pub field_type: String,
+    pub default_value: String,
+}
+
+impl From<JsPartialFieldTemplate> for FieldTemplate {
+    fn from(js_field: JsPartialFieldTemplate) -> Self {
+        Self {
+            id: generate_id(),
+            name: js_field.name,
+            field_type: FieldType::from(js_field.field_type),
+            default_value: js_field.default_value,
+        }
+    }
+}
+
 #[derive(Serialize, Deserialize, Tsify)]
 #[tsify(into_wasm_abi, from_wasm_abi)]
 pub struct JsPartialNodeTemplate {
@@ -169,6 +200,8 @@ pub struct JsPartialNodeTemplate {
     // Optional fields with defaults
     #[serde(skip_serializing_if = "Option::is_none")]
     pub slot_templates: Option<Vec<JsPartialSlotTemplate>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub field_templates: Option<Vec<JsPartialFieldTemplate>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub min_instances: Option<Option<usize>>, // Double Option because min_instances itself is Optional
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -183,6 +216,8 @@ pub struct JsPartialNodeTemplate {
     pub default_height: Option<f64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub can_modify_slots: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub can_modify_fields: Option<bool>,
 }
 
 #[derive(Serialize, Deserialize, Tsify)]
@@ -242,10 +277,16 @@ impl From<JsPartialNodeTemplate> for NodeTemplate {
         } else {
             default.slot_templates
         };
+        let field_templates = if let Some(partial_field_templates) = partial.field_templates {
+            partial_field_templates.into_iter().map(Into::into).collect()
+        } else {
+            default.field_templates
+        };
         Self {
             template_id: default.template_id,
             name: partial.name,
             slot_templates,
+            field_templates,
             min_instances: partial.min_instances.unwrap_or(default.min_instances),
             max_instances: partial.max_instances.unwrap_or(default.max_instances),
             can_delete: partial.can_delete.unwrap_or(default.can_delete),
@@ -253,6 +294,7 @@ impl From<JsPartialNodeTemplate> for NodeTemplate {
             default_width: partial.default_width.unwrap_or(default.default_width),
             default_height: partial.default_height.unwrap_or(default.default_height),
             can_modify_slots: partial.can_modify_slots.unwrap_or(default.can_modify_slots),
+            can_modify_fields: partial.can_modify_fields.unwrap_or(default.can_modify_fields),
         }
     }
 }

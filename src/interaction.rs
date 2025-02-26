@@ -4,7 +4,7 @@ use crate::{
     errors::{log_and_convert_error, GraphError, GraphResult},
     events::{EventSystem, SystemEvent},
     graph::{Connection, Graph, GraphCommand, NodeInstance, SlotInstance},
-    GraphCanvas,
+    log, GraphCanvas,
 };
 
 struct DragStateResetter<'a> {
@@ -39,6 +39,7 @@ pub struct InteractionState {
     pub is_mouse_down: bool,
     pub click_initiated_on_node: Option<String>,
     pub click_initiated_on_slot: Option<(String, String)>,
+    pub currently_selected_node_instance: Option<String>,
     pub is_dragging_node: bool,
     pub connection_drag: Option<ConnectionDragInfo>,
     pub context_menu: Option<ContextMenu>,
@@ -73,6 +74,7 @@ impl InteractionState {
             is_mouse_down: false,
             click_initiated_on_node: None,
             click_initiated_on_slot: None,
+            currently_selected_node_instance: None,
             is_dragging_node: false,
             context_menu: None,
             connection_drag: None,
@@ -108,6 +110,7 @@ pub struct ContextMenu {
     pub y: f64,
     pub target_type: ContextMenuTarget,
     pub items: Vec<ContextMenuItem>,
+    pub field_edit_value: Option<String>, // For field editing
 }
 #[derive(Clone, Debug)]
 pub enum ContextMenuTarget {
@@ -117,6 +120,10 @@ pub enum ContextMenuTarget {
     Slot {
         node_id: String,
         slot_template_id: String,
+    },
+    Field {
+        node_id: String,
+        field_template_id: String,
     },
 }
 impl ContextMenuTarget {
@@ -157,6 +164,29 @@ impl ContextMenuTarget {
                 }
                 "Unknown Slot".to_string()
             }
+            ContextMenuTarget::Field {
+                node_id,
+                field_template_id,
+            } => {
+                if let Some(node) = graph.node_instances.get(node_id) {
+                    if let Some(field) = node
+                        .fields
+                        .iter()
+                        .find(|f| f.field_template_id == *field_template_id)
+                    {
+                        if let Some(template) = graph.node_templates.get(&node.template_id) {
+                            if let Some(field_template) = template
+                                .field_templates
+                                .iter()
+                                .find(|t| t.id == field.field_template_id)
+                            {
+                                return format!("Field: {}", field_template.name);
+                            }
+                        }
+                    }
+                }
+                "Unknown Field".to_string()
+            }
         }
     }
 }
@@ -186,6 +216,10 @@ impl Rectangle {
 pub enum ContextMenuAction {
     Delete,
     DeleteAllSlotConnections,
+    EditField,
+    SetBooleanField(bool),
+    SetIntegerField(i32),
+    SetStringField(String),
 }
 #[wasm_bindgen]
 impl GraphCanvas {
@@ -292,8 +326,69 @@ impl GraphCanvas {
                     events,
                 )?;
             }
+            (
+                ContextMenuAction::SetBooleanField(value),
+                ContextMenuTarget::Field {
+                    node_id,
+                    field_template_id,
+                },
+            ) => {
+                // For boolean fields, set to true or false
+                let value_str = if value {
+                    "true".to_string()
+                } else {
+                    "false".to_string()
+                };
+                graph.execute_command(
+                    GraphCommand::UpdateField {
+                        node_id: node_id.clone(),
+                        field_template_id: field_template_id.clone(),
+                        new_value: value_str,
+                    },
+                    events,
+                )?;
+            }
+            (
+                ContextMenuAction::SetIntegerField(value),
+                ContextMenuTarget::Field {
+                    node_id,
+                    field_template_id,
+                },
+            ) => {
+                // For integer fields, set to the specified value
+                graph.execute_command(
+                    GraphCommand::UpdateField {
+                        node_id: node_id.clone(),
+                        field_template_id: field_template_id.clone(),
+                        new_value: value.to_string(),
+                    },
+                    events,
+                )?;
+            }
+            (
+                ContextMenuAction::SetStringField(value),
+                ContextMenuTarget::Field {
+                    node_id,
+                    field_template_id,
+                },
+            ) => {
+                // For string fields, set to the specified value
+                graph.execute_command(
+                    GraphCommand::UpdateField {
+                        node_id: node_id.clone(),
+                        field_template_id: field_template_id.clone(),
+                        new_value: value,
+                    },
+                    events,
+                )?;
+            }
+            (ContextMenuAction::EditField, ContextMenuTarget::Field { .. }) => {
+                // For now, we'll handle this in the JavaScript side
+                // by providing a UI prompt for text entry
+                log("Edit field action needs to be implemented in JS");
+            }
             _ => {
-                todo!();
+                log("Unhandled context menu action");
             }
         }
         Ok(())
@@ -419,19 +514,21 @@ impl GraphCanvas {
             let center_x = instance.x + instance.width / 2.0;
             let center_y = instance.y + instance.height / 2.0;
             let radius = instance.width.min(instance.height) / 2.0;
-            
+
             // Calculate distance from center of node
             let dx = x - center_x;
             let dy = y - center_y;
-            let distance = (dx*dx + dy*dy).sqrt();
-            
+            let distance = (dx * dx + dy * dy).sqrt();
+
             if distance <= radius {
                 ix.click_initiated_on_node = Some(id.clone());
+                ix.currently_selected_node_instance = Some(id.clone());
                 return Ok(());
             }
         }
         ix.click_initiated_on_node = None;
         ix.click_initiated_on_slot = None;
+        ix.currently_selected_node_instance = None;
         Ok(())
     }
 
@@ -462,12 +559,12 @@ impl GraphCanvas {
             let center_x = instance.x + instance.width / 2.0;
             let center_y = instance.y + instance.height / 2.0;
             let radius = instance.width.min(instance.height) / 2.0;
-            
+
             // Calculate distance from center of node
             let dx = x - center_x;
             let dy = y - center_y;
-            let distance = (dx*dx + dy*dy).sqrt();
-            
+            let distance = (dx * dx + dy * dy).sqrt();
+
             if distance <= radius {
                 ix.hovered_node = Some(id.clone());
                 return Ok(());
@@ -651,30 +748,86 @@ impl GraphCanvas {
                             y,
                             target_type: context_target.clone(),
                             items: vec![],
+                            field_edit_value: None,
                         });
                         events.emit(SystemEvent::ContextMenuOpened(context_target));
                         return Ok(());
                     }
                 }
 
-                // Check Nodes
-                // For circular nodes, check distance from center
+                // Calculate node center and dimensions for later checks
                 let center_x = instance.x + instance.width / 2.0;
                 let center_y = instance.y + instance.height / 2.0;
                 let radius = instance.width.min(instance.height) / 2.0;
-                
+
                 // Calculate distance from center of node
                 let dx = x - center_x;
                 let dy = y - center_y;
-                let distance = (dx*dx + dy*dy).sqrt();
-                
+                let distance = (dx * dx + dy * dy).sqrt();
+
+                // Check if we clicked within node radius
                 if distance <= radius {
+                    // Get the template to access field information
+                    if let Some(template) = graph.node_templates.get(&instance.template_id) {
+                        // If node has fields, check if we clicked on a field
+                        if !instance.fields.is_empty() {
+                            // Calculate field positions
+                            let title_y = if !instance.fields.is_empty() {
+                                center_y - (instance.fields.len() as f64 * 15.0) / 2.0 - 15.0
+                            } else {
+                                center_y
+                            };
+
+                            let mut y_offset = title_y + 20.0; // Start below the title
+
+                            // Check each field to see if it was clicked
+                            for field_instance in &instance.fields {
+                                // Field click area is approx +/- 10px vertically from text center
+                                if (y >= y_offset - 7.0) && (y <= y_offset + 7.0) {
+                                    // Check horizontal distance - if within reasonable bounds of the text
+                                    if distance <= radius * 0.8 {
+                                        // Somewhat arbitrary, just to make sure we're near the field text
+                                        // Get the field template for the menu title
+                                        if let Some(field_template) = template
+                                            .field_templates
+                                            .iter()
+                                            .find(|ft| ft.id == field_instance.field_template_id)
+                                        {
+                                            let context_target = ContextMenuTarget::Field {
+                                                node_id: instance_id.clone(),
+                                                field_template_id: field_instance
+                                                    .field_template_id
+                                                    .clone(),
+                                            };
+                                            ix.context_menu = Some(ContextMenu {
+                                                x,
+                                                y,
+                                                target_type: context_target.clone(),
+                                                items: vec![],
+                                                field_edit_value: Some(
+                                                    field_instance.value.clone(),
+                                                ),
+                                            });
+                                            events.emit(SystemEvent::ContextMenuOpened(
+                                                context_target,
+                                            ));
+                                            return Ok(());
+                                        }
+                                    }
+                                }
+                                y_offset += 15.0; // Move down for next field
+                            }
+                        }
+                    }
+
+                    // If we didn't click on a field but are within the node, open the node context menu
                     let context_target = ContextMenuTarget::Node(instance_id.clone());
                     ix.context_menu = Some(ContextMenu {
                         x,
                         y,
                         target_type: context_target.clone(),
                         items: vec![],
+                        field_edit_value: None,
                     });
                     events.emit(SystemEvent::ContextMenuOpened(context_target));
                     return Ok(());
@@ -698,6 +851,7 @@ impl GraphCanvas {
                             y,
                             target_type: context_target.clone(),
                             items: vec![],
+                            field_edit_value: None,
                         });
                         events.emit(SystemEvent::ContextMenuOpened(context_target));
                         return Ok(());
