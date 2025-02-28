@@ -25,7 +25,7 @@ pub enum FieldType {
 #[derive(Debug, Clone)]
 pub struct FieldTemplate {
     pub id: String,
-    pub name: String, 
+    pub name: String,
     pub field_type: FieldType,
     pub default_value: String,
 }
@@ -159,7 +159,7 @@ impl NodeInstance {
             connections: Vec::new(),
             can_modify: true,
         });
-        
+
         // Create field instances from template
         let fields = template
             .field_templates
@@ -385,11 +385,20 @@ impl Graph {
                     fields: template
                         .field_templates
                         .iter()
-                        .map(|field_template| FieldInstance {
-                            node_instance_id: instance_id.clone(),
-                            field_template_id: field_template.id.clone(),
-                            value: field_template.default_value.clone(),
-                            can_modify: true,
+                        .map(|field_template| {
+                            let value =
+                                match node.initial_field_values.iter().find(|initial_field| {
+                                    initial_field.field_id == field_template.id
+                                }) {
+                                    Some(found_field) => found_field.value.clone(),
+                                    None => field_template.default_value.clone(),
+                                };
+                            FieldInstance {
+                                node_instance_id: instance_id.clone(),
+                                field_template_id: field_template.id.clone(),
+                                value,
+                                can_modify: true,
+                            }
                         })
                         .collect(),
                 };
@@ -1046,12 +1055,12 @@ impl Graph {
             GraphCommand::CreateConnection(connection) => self.connect_slots(connection, events),
             GraphCommand::CreateNode { template_id, x, y } => {
                 self.create_instance(&template_id, x, y, None).map(|_| ())
-            },
-            GraphCommand::UpdateField { 
-                node_id, 
-                field_template_id, 
-                new_value 
-            } => self.update_field(&node_id, &field_template_id, new_value)
+            }
+            GraphCommand::UpdateField {
+                node_id,
+                field_template_id,
+                new_value,
+            } => self.update_field(&node_id, &field_template_id, new_value),
         };
         match &result {
             Ok(_) => {
@@ -1063,52 +1072,67 @@ impl Graph {
         }
         result
     }
-    
+
     // Method to update a field's value
-    pub fn update_field(&mut self, node_id: &str, field_template_id: &str, new_value: String) -> GraphResult<()> {
+    pub fn update_field(
+        &mut self,
+        node_id: &str,
+        field_template_id: &str,
+        new_value: String,
+    ) -> GraphResult<()> {
         if let Some(node) = self.node_instances.get_mut(node_id) {
             // Check if node allows field modifications
             if !node.can_modify_fields {
                 return Err(GraphError::Other("Node fields are locked".to_string()));
             }
-            
+
             // Find the field template to validate the value
-            let template = self.node_templates.get(&node.template_id)
+            let template = self
+                .node_templates
+                .get(&node.template_id)
                 .ok_or(GraphError::Other("Node template not found".to_string()))?;
-                
-            let field_template = template.field_templates.iter()
+
+            let field_template = template
+                .field_templates
+                .iter()
                 .find(|ft| ft.id == field_template_id)
                 .ok_or(GraphError::Other("Field template not found".to_string()))?;
-                
+
             // Validate the value based on field type
             match field_template.field_type {
                 FieldType::Boolean => {
                     if new_value != "true" && new_value != "false" {
                         return Err(GraphError::Other("Invalid boolean value".to_string()));
                     }
-                },
+                }
                 FieldType::Integer => {
                     if new_value.parse::<i32>().is_err() {
                         return Err(GraphError::Other("Invalid integer value".to_string()));
                     }
-                },
+                }
                 FieldType::String => {
                     // All string values are valid
                 }
             }
-            
+
             // Update the field value
-            if let Some(field) = node.fields.iter_mut().find(|f| f.field_template_id == field_template_id) {
+            if let Some(field) = node
+                .fields
+                .iter_mut()
+                .find(|f| f.field_template_id == field_template_id)
+            {
                 if !field.can_modify {
                     return Err(GraphError::Other("Field is locked".to_string()));
                 }
                 field.value = new_value;
                 return Ok(());
             }
-            
-            return Err(GraphError::Other("Field not found in node instance".to_string()));
+
+            return Err(GraphError::Other(
+                "Field not found in node instance".to_string(),
+            ));
         }
-        
+
         Err(GraphError::Other("Node instance not found".to_string()))
     }
 }

@@ -137,6 +137,7 @@ pub struct InitialNode {
     pub can_move: bool,
     pub initial_connections: Vec<InitialConnection>,
     pub id: Option<String>,
+    pub initial_field_values: Vec<InitialFieldValue>,
 }
 impl InitialNode {
     pub fn new(template_name: String) -> Self {
@@ -148,6 +149,7 @@ impl InitialNode {
             can_move: true,
             initial_connections: vec![],
             id: None,
+            initial_field_values: vec![],
         }
     }
 }
@@ -157,4 +159,10 @@ pub struct InitialConnection {
     pub host_slot_name: String,
     pub target_instance_id: String,
     pub can_delete: bool,
+}
+
+#[derive(Clone, Debug)]
+pub struct InitialFieldValue {
+    pub field_id: String,
+    pub value: String,
 }

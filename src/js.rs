@@ -1,5 +1,7 @@
 use crate::common::generate_id;
-use crate::config::{GraphCanvasConfig, InitialConnection, InitialNode, TemplateGroup};
+use crate::config::{
+    GraphCanvasConfig, InitialConnection, InitialFieldValue, InitialNode, TemplateGroup,
+};
 use crate::graph::{FieldTemplate, FieldType, NodeTemplate, SlotPosition, SlotTemplate, SlotType};
 use serde::{Deserialize, Serialize};
 use tsify::Tsify;
@@ -257,6 +259,8 @@ pub struct JsPartialInitialNode {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub initial_connections: Option<Vec<JsInitialConnection>>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub initial_field_values: Option<Vec<JsInitialFieldValue>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub id: Option<String>,
 }
 
@@ -278,7 +282,10 @@ impl From<JsPartialNodeTemplate> for NodeTemplate {
             default.slot_templates
         };
         let field_templates = if let Some(partial_field_templates) = partial.field_templates {
-            partial_field_templates.into_iter().map(Into::into).collect()
+            partial_field_templates
+                .into_iter()
+                .map(Into::into)
+                .collect()
         } else {
             default.field_templates
         };
@@ -294,7 +301,9 @@ impl From<JsPartialNodeTemplate> for NodeTemplate {
             default_width: partial.default_width.unwrap_or(default.default_width),
             default_height: partial.default_height.unwrap_or(default.default_height),
             can_modify_slots: partial.can_modify_slots.unwrap_or(default.can_modify_slots),
-            can_modify_fields: partial.can_modify_fields.unwrap_or(default.can_modify_fields),
+            can_modify_fields: partial
+                .can_modify_fields
+                .unwrap_or(default.can_modify_fields),
         }
     }
 }
@@ -330,6 +339,10 @@ impl From<JsPartialInitialNode> for InitialNode {
             Some(conns) => conns.into_iter().map(|conn| conn.into()).collect(),
             None => vec![],
         };
+        let initial_field_values = match partial.initial_field_values {
+            Some(values) => values.into_iter().map(|value| value.into()).collect(),
+            None => vec![],
+        };
         Self {
             template_name: partial.template_name,
             x: partial.x,
@@ -337,6 +350,7 @@ impl From<JsPartialInitialNode> for InitialNode {
             can_delete: partial.can_delete.unwrap_or(true),
             can_move: partial.can_move.unwrap_or(true),
             initial_connections,
+            initial_field_values,
             id: partial.id,
         }
     }
@@ -348,6 +362,21 @@ impl From<JsInitialConnection> for InitialConnection {
             can_delete: js_conn.can_delete,
             host_slot_name: js_conn.host_slot_name,
             target_instance_id: js_conn.target_instance_id,
+        }
+    }
+}
+
+#[derive(Serialize, Deserialize, Tsify)]
+pub struct JsInitialFieldValue {
+    pub field_id: String,
+    pub value: String,
+}
+
+impl From<JsInitialFieldValue> for InitialFieldValue {
+    fn from(js_field: JsInitialFieldValue) -> Self {
+        Self {
+            field_id: js_field.field_id,
+            value: js_field.value,
         }
     }
 }

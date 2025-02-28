@@ -23,6 +23,7 @@ pub mod prelude;
 
 pub use config::GraphCanvasConfig;
 pub use config::InitialConnection;
+pub use config::InitialFieldValue;
 pub use config::InitialNode;
 pub use config::TemplateGroup;
 pub use graph::Connection;
@@ -34,6 +35,8 @@ pub use graph::SlotTemplate;
 pub use graph::SlotType;
 #[cfg(feature = "js")]
 pub use js::JsInitialConnection;
+#[cfg(feature = "js")]
+pub use js::JsInitialFieldValue;
 #[cfg(feature = "js")]
 pub use js::JsPartialConfig;
 #[cfg(feature = "js")]
