@@ -183,8 +183,8 @@ impl GraphCanvas {
                         self.calculate_slot_position(slot_template, node.instance, graph);
 
                     // Calculate node center for control point
-                    let node_center_x = node.instance.x + node.instance.width / 2.0;
-                    let node_center_y = node.instance.y + node.instance.height / 2.0;
+                    let node_center_x = node.instance.x + node.instance.radius;
+                    let node_center_y = node.instance.y + node.instance.radius;
 
                     // Calculate angle from center to slot
                     let start_angle = (start_y - node_center_y).atan2(start_x - node_center_x);
@@ -226,9 +226,9 @@ impl GraphCanvas {
         };
 
         // Calculate node center and radius
-        let center_x = instance.x + instance.width / 2.0;
-        let center_y = instance.y + instance.height / 2.0;
-        let radius = (instance.width.min(instance.height) / 2.0) - 2.0; // Slightly smaller to account for stroke
+        let center_x = instance.x + instance.radius;
+        let center_y = instance.y + instance.radius;
+        let radius = instance.radius - 2.0; // Slightly smaller to account for stroke
 
         // Selected Effect
         if ix.currently_selected_node_instance.as_ref() == Some(&instance.instance_id) {
@@ -248,7 +248,7 @@ impl GraphCanvas {
 
         // Draw node circle
         context.begin_path();
-        context.set_fill_style_str("#ffffff");
+        context.set_fill_style_str(&instance.color);
         context.set_stroke_style_str("#000000");
         context.arc(center_x, center_y, radius, 0.0, 2.0 * std::f64::consts::PI)?;
         context.fill();
@@ -498,8 +498,8 @@ impl GraphCanvas {
         context.set_fill_style_str("#000000");
 
         // Calculate angle from node center to slot
-        let center_x = node.x + node.width / 2.0;
-        let center_y = node.y + node.height / 2.0;
+        let center_x = node.x + node.radius;
+        let center_y = node.y + node.radius;
         let angle = (y - center_y).atan2(x - center_x);
 
         // Text position is outside the slot
@@ -1206,10 +1206,10 @@ impl GraphCanvas {
         to_node: &NodeInstance,
     ) -> f64 {
         // Calculate node centers
-        let from_center_x = from_node.x + from_node.width / 2.0;
-        let from_center_y = from_node.y + from_node.height / 2.0;
-        let to_center_x = to_node.x + to_node.width / 2.0;
-        let to_center_y = to_node.y + to_node.height / 2.0;
+        let from_center_x = from_node.x + from_node.radius;
+        let from_center_y = from_node.y + from_node.radius;
+        let to_center_x = to_node.x + to_node.radius;
+        let to_center_y = to_node.y + to_node.radius;
 
         // Calculate angles from center to slot
         let from_angle = (start.1 - from_center_y).atan2(start.0 - from_center_x);
@@ -1440,9 +1440,9 @@ impl GraphCanvas {
         is_initialization: bool,
     ) -> HashMap<String, (f64, f64)> {
         let node_template = node.capabilities(graph).template;
-        let center_x = node.x + node.width / 2.0;
-        let center_y = node.y + node.height / 2.0;
-        let radius = node.width.min(node.height) / 2.0 - 2.0;
+        let center_x = node.x + node.radius;
+        let center_y = node.y + node.radius;
+        let radius = node.radius;
 
         let mut slot_positions = HashMap::new();
         let mut slot_angles = HashMap::new();
@@ -1476,8 +1476,8 @@ impl GraphCanvas {
                 for connection in &slot.connections {
                     if let Some(target_node) = graph.node_instances.get(&connection.target_node_id)
                     {
-                        let target_x = target_node.x + target_node.width / 2.0;
-                        let target_y = target_node.y + target_node.height / 2.0;
+                        let target_x = target_node.x + target_node.radius;
+                        let target_y = target_node.y + target_node.radius;
                         let angle = (target_y - center_y).atan2(target_x - center_x);
                         connection_angles.push(angle);
                     }
@@ -1532,8 +1532,8 @@ impl GraphCanvas {
             for other_slot in &other_node.slots {
                 for conn in &other_slot.connections {
                     if conn.target_node_id == node.instance_id {
-                        let other_x = other_node.x + other_node.width / 2.0;
-                        let other_y = other_node.y + other_node.height / 2.0;
+                        let other_x = other_node.x + other_node.radius;
+                        let other_y = other_node.y + other_node.radius;
                         let angle = (other_y - center_y).atan2(other_x - center_x);
                         incoming_connections.push(angle);
                     }
@@ -1980,9 +1980,9 @@ impl GraphCanvas {
         }
 
         // Fallback to old-style calculation for compatibility
-        let center_x = node.x + node.width / 2.0;
-        let center_y = node.y + node.height / 2.0;
-        let radius = (node.width.min(node.height) / 2.0) - 2.0;
+        let center_x = node.x + node.radius;
+        let center_y = node.y + node.radius;
+        let radius = node.radius;
 
         // Place at a default position based on original position property
         let angle = match slot_template.position {
@@ -2048,10 +2048,10 @@ impl GraphCanvas {
         let (end_x, end_y) = self.calculate_slot_position(to_slot_template, to_node, graph);
 
         // Calculate centers of nodes for control points
-        let from_center_x = from_node.x + from_node.width / 2.0;
-        let from_center_y = from_node.y + from_node.height / 2.0;
-        let to_center_x = to_node.x + to_node.width / 2.0;
-        let to_center_y = to_node.y + to_node.height / 2.0;
+        let from_center_x = from_node.x + from_node.radius;
+        let from_center_y = from_node.y + from_node.radius;
+        let to_center_x = to_node.x + to_node.radius;
+        let to_center_y = to_node.y + to_node.radius;
 
         // Calculate angles from center to slot
         let from_angle = (start_y - from_center_y).atan2(start_x - from_center_x);

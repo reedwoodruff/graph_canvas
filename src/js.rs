@@ -213,9 +213,9 @@ pub struct JsPartialNodeTemplate {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub can_create: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub default_width: Option<f64>,
+    pub default_radius: Option<f64>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub default_height: Option<f64>,
+    pub default_color: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub can_modify_slots: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -298,8 +298,8 @@ impl From<JsPartialNodeTemplate> for NodeTemplate {
             max_instances: partial.max_instances.unwrap_or(default.max_instances),
             can_delete: partial.can_delete.unwrap_or(default.can_delete),
             can_create: partial.can_create.unwrap_or(default.can_create),
-            default_width: partial.default_width.unwrap_or(default.default_width),
-            default_height: partial.default_height.unwrap_or(default.default_height),
+            default_color: partial.default_color.unwrap_or(default.default_color),
+            default_radius: partial.default_radius.unwrap_or(default.default_radius),
             can_modify_slots: partial.can_modify_slots.unwrap_or(default.can_modify_slots),
             can_modify_fields: partial
                 .can_modify_fields

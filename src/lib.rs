@@ -1204,8 +1204,8 @@ impl GraphCanvas {
                     default_value: "Test".to_string(),
                 },
             ],
-            default_width: 150.0,
-            default_height: 130.0, // Increased height to fit fields
+            default_radius: 150.0,
+            default_color: "red".to_string(),
             can_modify_fields: true,
         }
     }

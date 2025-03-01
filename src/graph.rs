@@ -54,8 +54,10 @@ pub struct NodeTemplate {
     pub can_modify_slots: bool,
     pub can_modify_fields: bool,
     // Visual defaults could go here
-    pub default_width: f64,
-    pub default_height: f64,
+    pub default_radius: f64,
+    pub default_color: String,
+    // pub default_width: f64,
+    // pub default_height: f64,
 }
 impl NodeTemplate {
     pub fn new(name: &str) -> Self {
@@ -68,10 +70,12 @@ impl NodeTemplate {
             min_instances: None,
             can_delete: true,
             can_create: true,
-            default_width: 150.0,
-            default_height: 100.0,
+            // default_width: 150.0,
+            // default_height: 100.0,
             can_modify_slots: true,
             can_modify_fields: true,
+            default_radius: 100.0,
+            default_color: "white".to_string(),
         }
     }
 }
@@ -84,7 +88,6 @@ impl NodeTemplateInfo for NodeTemplate {
         self.slot_templates.iter().find(|st| st.name == slot_name)
     }
 }
-impl NodeTemplate {}
 
 #[derive(Debug, Clone)]
 pub struct SlotTemplate {
@@ -127,8 +130,10 @@ pub struct NodeInstance {
     pub template_id: String,
     pub x: f64,
     pub y: f64,
-    pub width: f64,
-    pub height: f64,
+    // pub width: f64,
+    // pub height: f64,
+    pub radius: f64,
+    pub color: String,
     pub slots: Vec<SlotInstance>,
     pub fields: Vec<FieldInstance>,
     pub can_delete: bool,
@@ -177,8 +182,8 @@ impl NodeInstance {
             template_id: template.template_id.clone(),
             x,
             y,
-            width: template.default_width,
-            height: template.default_height,
+            radius: template.default_radius,
+            color: template.default_color.clone(),
             slots,
             fields,
             can_delete: true,
@@ -364,8 +369,8 @@ impl Graph {
                     template_id: template.template_id.clone(),
                     x: node.x,
                     y: node.y,
-                    width: template.default_width,
-                    height: template.default_height,
+                    radius: template.default_radius,
+                    color: template.default_color,
                     can_move: true,
                     can_delete: true,
                     can_modify_connections: true,
@@ -525,8 +530,8 @@ impl Graph {
             template_id: node_template_id.to_string(),
             x,
             y,
-            width: template.default_width,
-            height: template.default_height,
+            radius: template.default_radius,
+            color: template.default_color.clone(),
             can_move: true,
             can_delete: true,
             can_modify_connections: true,

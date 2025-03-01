@@ -511,9 +511,9 @@ impl GraphCanvas {
         // Check if clicked on a node
         for (id, instance) in graph.node_instances.iter() {
             // For circular nodes, check distance from center
-            let center_x = instance.x + instance.width / 2.0;
-            let center_y = instance.y + instance.height / 2.0;
-            let radius = instance.width.min(instance.height) / 2.0;
+            let center_x = instance.x + instance.radius;
+            let center_y = instance.y + instance.radius;
+            let radius = instance.radius;
 
             // Calculate distance from center of node
             let dx = x - center_x;
@@ -556,9 +556,9 @@ impl GraphCanvas {
         // Check for hovering over nodes
         for (id, instance) in &graph.node_instances {
             // For circular nodes, check distance from center
-            let center_x = instance.x + instance.width / 2.0;
-            let center_y = instance.y + instance.height / 2.0;
-            let radius = instance.width.min(instance.height) / 2.0;
+            let center_x = instance.x + instance.radius;
+            let center_y = instance.y + instance.radius;
+            let radius = instance.radius;
 
             // Calculate distance from center of node
             let dx = x - center_x;
@@ -642,8 +642,8 @@ impl GraphCanvas {
         if ix.is_dragging_node {
             if let Some(ref selected_id) = ix.click_initiated_on_node.clone() {
                 if let Some(instance) = graph.node_instances.get_mut(selected_id) {
-                    instance.x = x - instance.width / 2.0;
-                    instance.y = y - instance.height / 2.0;
+                    instance.x = x - instance.radius;
+                    instance.y = y - instance.radius;
                 }
             }
         }
@@ -673,9 +673,9 @@ impl GraphCanvas {
                 if target_node_id != connection_drag.from_node {
                     // Check if point is within node bounds
                     if x >= target_node.x
-                        && x <= target_node.x + target_node.width
+                        && x <= target_node.x + (target_node.radius * 2.0)
                         && y >= target_node.y
-                        && y <= target_node.y + target_node.height
+                        && y <= target_node.y + (target_node.radius * 2.0)
                     {
                         resetter.graph.connect_slots(
                             Connection {
@@ -756,9 +756,9 @@ impl GraphCanvas {
                 }
 
                 // Calculate node center and dimensions for later checks
-                let center_x = instance.x + instance.width / 2.0;
-                let center_y = instance.y + instance.height / 2.0;
-                let radius = instance.width.min(instance.height) / 2.0;
+                let center_x = instance.x + instance.radius;
+                let center_y = instance.y + instance.radius;
+                let radius = instance.radius;
 
                 // Calculate distance from center of node
                 let dx = x - center_x;
