@@ -128,9 +128,26 @@ impl Default for GraphCanvasConfig {
     }
 }
 
+#[cfg_attr(
+    feature = "js",
+    derive(serde::Serialize, serde::Deserialize, tsify::Tsify)
+)]
+#[cfg_attr(feature = "js", tsify(into_wasm_abi, from_wasm_abi))]
+#[derive(Clone, Debug)]
+pub enum TemplateIdentifier {
+    Name(String),
+    Id(String),
+}
+
+impl From<u128> for TemplateIdentifier {
+    fn from(id: u128) -> Self {
+        TemplateIdentifier::Id(uuid::Uuid::from_u128(id).to_string())
+    }
+}
+
 #[derive(Clone, Debug)]
 pub struct InitialNode {
-    pub template_name: String,
+    pub template_identifier: TemplateIdentifier,
     pub x: f64,
     pub y: f64,
     pub can_delete: bool,
@@ -140,9 +157,9 @@ pub struct InitialNode {
     pub initial_field_values: Vec<InitialFieldValue>,
 }
 impl InitialNode {
-    pub fn new(template_name: String) -> Self {
+    pub fn new(template_identifier: TemplateIdentifier) -> Self {
         Self {
-            template_name,
+            template_identifier,
             x: 10.0,
             y: 10.0,
             can_delete: true,

@@ -1,6 +1,6 @@
 use crate::{
     errors::{GraphError, GraphResult},
-    log, InitialNode,
+    log, InitialNode, TemplateIdentifier,
 };
 use std::collections::HashMap;
 
@@ -56,8 +56,6 @@ pub struct NodeTemplate {
     // Visual defaults could go here
     pub default_radius: f64,
     pub default_color: String,
-    // pub default_width: f64,
-    // pub default_height: f64,
 }
 impl NodeTemplate {
     pub fn new(name: &str) -> Self {
@@ -74,7 +72,7 @@ impl NodeTemplate {
             // default_height: 100.0,
             can_modify_slots: true,
             can_modify_fields: true,
-            default_radius: 100.0,
+            default_radius: 50.0,
             default_color: "white".to_string(),
         }
     }
@@ -347,12 +345,15 @@ impl Graph {
         let new_ids = initial_nodes
             .iter()
             .map(|node| {
-                let template = self.get_node_template_by_name(&node.template_name).ok_or(
-                    GraphError::ConfigurationError(
+                let template = self
+                    .get_node_template_by_identifier(&node.template_identifier)
+                    .ok_or(GraphError::ConfigurationError(
                         "Could not create initial node".to_string(),
-                        Box::new(GraphError::TemplateNotFound(node.template_name.clone())),
-                    ),
-                )?;
+                        Box::new(GraphError::TemplateNotFound(format!(
+                            "{:#?}",
+                            node.template_identifier.clone()
+                        ))),
+                    ))?;
                 // let template_id = self
                 //     .get_node_template_by_name(&node.template_name.clone())
                 //     .ok_or(
@@ -1020,6 +1021,15 @@ impl Graph {
             .values()
             .find(|t| t.name == name)
             .cloned()
+    }
+    pub fn get_node_template_by_identifier(
+        &self,
+        identifier: &TemplateIdentifier,
+    ) -> Option<NodeTemplate> {
+        match identifier {
+            TemplateIdentifier::Name(name) => self.get_node_template_by_name(name),
+            TemplateIdentifier::Id(id) => self.node_templates.get(id).cloned(),
+        }
     }
 }
 

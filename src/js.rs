@@ -1,6 +1,7 @@
 use crate::common::generate_id;
 use crate::config::{
     GraphCanvasConfig, InitialConnection, InitialFieldValue, InitialNode, TemplateGroup,
+    TemplateIdentifier,
 };
 use crate::graph::{FieldTemplate, FieldType, NodeTemplate, SlotPosition, SlotTemplate, SlotType};
 use serde::{Deserialize, Serialize};
@@ -247,7 +248,7 @@ pub struct JsPartialSlotTemplate {
 #[tsify(into_wasm_abi, from_wasm_abi)]
 pub struct JsPartialInitialNode {
     // Required fields
-    pub template_name: String,
+    pub template_identifier: TemplateIdentifier,
     pub x: f64,
     pub y: f64,
 
@@ -344,7 +345,7 @@ impl From<JsPartialInitialNode> for InitialNode {
             None => vec![],
         };
         Self {
-            template_name: partial.template_name,
+            template_identifier: partial.template_identifier,
             x: partial.x,
             y: partial.y,
             can_delete: partial.can_delete.unwrap_or(true),

@@ -38,7 +38,11 @@
                                     name: "Output",
                                     position: "Right",
                                     slot_type: "Outgoing",
-                                    allowed_connections: ["Basic Node", "Math Node", "Test Node"],
+                                    allowed_connections: [
+                                        "Basic Node",
+                                        "Math Node",
+                                        "Test Node",
+                                    ],
                                     min_connections: 0,
                                     max_connections: 5,
                                 },
@@ -46,7 +50,11 @@
                                     name: "Input",
                                     position: "Left",
                                     slot_type: "Incoming",
-                                    allowed_connections: ["Basic Node", "Math Node", "Test Node"],
+                                    allowed_connections: [
+                                        "Basic Node",
+                                        "Math Node",
+                                        "Test Node",
+                                    ],
                                     min_connections: 0,
                                     max_connections: 5,
                                 },
@@ -55,13 +63,13 @@
                                 {
                                     name: "Enabled",
                                     field_type: "Boolean",
-                                    default_value: "true"
+                                    default_value: "true",
                                 },
                                 {
                                     name: "Name",
                                     field_type: "String",
-                                    default_value: "Default"
-                                }
+                                    default_value: "Default",
+                                },
                             ],
                             default_width: 150,
                             default_height: 120,
@@ -73,7 +81,11 @@
                                     name: "Value Out",
                                     position: "Right",
                                     slot_type: "Outgoing",
-                                    allowed_connections: ["Basic Node", "Math Node", "Test Node"],
+                                    allowed_connections: [
+                                        "Basic Node",
+                                        "Math Node",
+                                        "Test Node",
+                                    ],
                                     min_connections: 0,
                                     max_connections: 5,
                                 },
@@ -81,7 +93,10 @@
                                     name: "Value A",
                                     position: "Left",
                                     slot_type: "Incoming",
-                                    allowed_connections: ["Basic Node", "Math Node"],
+                                    allowed_connections: [
+                                        "Basic Node",
+                                        "Math Node",
+                                    ],
                                     min_connections: 0,
                                     max_connections: 1,
                                 },
@@ -89,7 +104,10 @@
                                     name: "Value B",
                                     position: "Left",
                                     slot_type: "Incoming",
-                                    allowed_connections: ["Basic Node", "Math Node"],
+                                    allowed_connections: [
+                                        "Basic Node",
+                                        "Math Node",
+                                    ],
                                     min_connections: 0,
                                     max_connections: 1,
                                 },
@@ -98,13 +116,13 @@
                                 {
                                     name: "Operation",
                                     field_type: "String",
-                                    default_value: "Add"
+                                    default_value: "Add",
                                 },
                                 {
                                     name: "Multiplier",
                                     field_type: "Integer",
-                                    default_value: "1"
-                                }
+                                    default_value: "1",
+                                },
                             ],
                             default_width: 150,
                             default_height: 140,
@@ -116,7 +134,11 @@
                                     name: "Then",
                                     position: "Right",
                                     slot_type: "Outgoing",
-                                    allowed_connections: ["Basic Node", "Math Node", "Logic Node"],
+                                    allowed_connections: [
+                                        "Basic Node",
+                                        "Math Node",
+                                        "Logic Node",
+                                    ],
                                     min_connections: 0,
                                     max_connections: 1,
                                 },
@@ -124,7 +146,11 @@
                                     name: "Else",
                                     position: "Right",
                                     slot_type: "Outgoing",
-                                    allowed_connections: ["Basic Node", "Math Node", "Logic Node"],
+                                    allowed_connections: [
+                                        "Basic Node",
+                                        "Math Node",
+                                        "Logic Node",
+                                    ],
                                     min_connections: 0,
                                     max_connections: 1,
                                 },
@@ -132,7 +158,10 @@
                                     name: "Condition",
                                     position: "Left",
                                     slot_type: "Incoming",
-                                    allowed_connections: ["Basic Node", "Math Node"],
+                                    allowed_connections: [
+                                        "Basic Node",
+                                        "Math Node",
+                                    ],
                                     min_connections: 0,
                                     max_connections: 1,
                                 },
@@ -147,7 +176,11 @@
                                     name: "Data Out",
                                     position: "Right",
                                     slot_type: "Outgoing",
-                                    allowed_connections: ["Basic Node", "Math Node", "Data Node"],
+                                    allowed_connections: [
+                                        "Basic Node",
+                                        "Math Node",
+                                        "Data Node",
+                                    ],
                                     min_connections: 0,
                                     max_connections: 10,
                                 },
@@ -161,28 +194,28 @@
                         {
                             id: "basic",
                             name: "Basic",
-                            templates: ["Basic Node"]
+                            templates: ["Basic Node"],
                         },
                         {
                             id: "math",
                             name: "Mathematics",
                             description: "Mathematical operation nodes",
-                            templates: ["Math Node"]
+                            templates: ["Math Node"],
                         },
                         {
                             id: "logic",
                             name: "Logic",
-                            templates: ["Logic Node"]
+                            templates: ["Logic Node"],
                         },
                         {
                             id: "data",
                             name: "Data",
-                            templates: ["Data Node"]
+                            templates: ["Data Node"],
                         },
                     ],
                     initial_nodes: [
                         {
-                            template_name: "Test Node",
+                            template_identifier: { Name: "Test Node" },
                             x: 100,
                             y: 100,
                             can_delete: false,

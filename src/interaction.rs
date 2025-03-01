@@ -44,7 +44,7 @@ pub struct InteractionState {
     pub connection_drag: Option<ConnectionDragInfo>,
     pub context_menu: Option<ContextMenu>,
     pub mode: InteractionMode,
-    pub current_node_template_name: String,
+    pub actively_creating_node_template_id: String,
     pub is_panning: bool,
     pub view_transform: ViewTransform,
     pub hovered_node: Option<String>,
@@ -79,7 +79,7 @@ impl InteractionState {
             context_menu: None,
             connection_drag: None,
             mode: InteractionMode::Default,
-            current_node_template_name: "Unset".to_string(),
+            actively_creating_node_template_id: "Unset".to_string(),
             is_panning: false,
             view_transform: ViewTransform {
                 pan_x: 0.0,
@@ -481,8 +481,11 @@ impl GraphCanvas {
     }
 
     /// Update the node template that should be added in AddNode mode.
-    pub fn set_current_node_template(&self, template: &str) {
-        self.interaction.lock().unwrap().current_node_template_name = template.to_string();
+    pub fn set_current_node_template(&self, template_id: &str) {
+        self.interaction
+            .lock()
+            .unwrap()
+            .actively_creating_node_template_id = template_id.to_string();
     }
     fn internal_pointer_handle_mouse_down(
         &self,
@@ -924,11 +927,13 @@ impl GraphCanvas {
             return Ok(());
         }
         let template_id = graph
-            .get_node_template_by_name(&ix.current_node_template_name)
+            .node_templates
+            .get(&ix.actively_creating_node_template_id)
             .ok_or(GraphError::TemplateNotFound(
-                ix.current_node_template_name.clone(),
+                ix.actively_creating_node_template_id.clone(),
             ))?
-            .template_id;
+            .template_id
+            .clone();
         graph.execute_command(GraphCommand::CreateNode { template_id, x, y }, events)?;
         Ok(())
     }

@@ -26,6 +26,7 @@ pub use config::InitialConnection;
 pub use config::InitialFieldValue;
 pub use config::InitialNode;
 pub use config::TemplateGroup;
+pub use config::TemplateIdentifier;
 pub use graph::Connection;
 pub use graph::FieldTemplate;
 pub use graph::FieldType;
@@ -392,6 +393,7 @@ impl GraphCanvas {
                 let template_button = document.create_element("button")?;
                 template_button.set_inner_html(&template.name);
                 template_button.set_attribute("data-template-name", &template.name)?;
+                template_button.set_attribute("data-template-id", &template.template_id)?;
                 template_button.set_attribute("class", "template-button")?;
                 template_button.set_attribute("style", "padding: 6px 10px; border: 1px solid #ddd; border-radius: 4px; text-align: left; background: white; cursor: pointer; margin: 2px 0;")?;
                 content_container.append_child(&template_button)?;
@@ -667,15 +669,14 @@ impl GraphCanvas {
                 .dyn_into::<web_sys::HtmlElement>()?;
             let template_button_clone = template_button.clone();
             let graph_canvas_clone = graph_canvas.clone();
-            let template_group_container_clone = template_group_container.clone();
 
             let template_click = Closure::wrap(Box::new(move |_event: web_sys::MouseEvent| {
-                let template_name = template_button_clone
-                    .get_attribute("data-template-name")
+                let template_id = template_button_clone
+                    .get_attribute("data-template-id")
                     .unwrap();
 
                 // Set the selected template
-                graph_canvas_clone.set_current_node_template(&template_name);
+                graph_canvas_clone.set_current_node_template(&template_id);
 
                 // Keep the template selection UI open so user can continue adding nodes
                 // Optional: could close it here if preferred
@@ -737,7 +738,7 @@ impl GraphCanvas {
         let graph_canvas_clone = graph_canvas.clone();
 
         // Custom event handler for node selection
-        let node_selection_handler = Closure::wrap(Box::new(move |event: web_sys::MouseEvent| {
+        let node_selection_handler = Closure::wrap(Box::new(move |_event: web_sys::MouseEvent| {
             let graph = graph_canvas_clone.graph.lock().unwrap();
             let interaction = graph_canvas_clone.interaction.lock().unwrap();
 

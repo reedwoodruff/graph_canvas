@@ -3,6 +3,7 @@ pub use crate::config::InitialConnection;
 pub use crate::config::InitialFieldValue;
 pub use crate::config::InitialNode;
 pub use crate::config::TemplateGroup;
+pub use crate::config::TemplateIdentifier;
 pub use crate::graph::Connection;
 pub use crate::graph::FieldTemplate;
 pub use crate::graph::FieldType;
