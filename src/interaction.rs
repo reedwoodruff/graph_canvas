@@ -223,7 +223,7 @@ pub enum ContextMenuAction {
 }
 #[wasm_bindgen]
 impl GraphCanvas {
-    pub fn handle_mouse_down(&self, screen_x: f64, screen_y: f64) -> Result<(), JsValue> {
+    pub(crate) fn handle_mouse_down(&self, screen_x: f64, screen_y: f64) -> Result<(), JsValue> {
         let mut ix = self.interaction.lock().map_err(log_and_convert_error)?;
         let mut graph = self.graph.lock().map_err(log_and_convert_error)?;
         let events = self.events.lock().map_err(log_and_convert_error)?;
@@ -243,7 +243,7 @@ impl GraphCanvas {
         Ok(())
     }
 
-    pub fn handle_mouse_move(
+    pub(crate) fn handle_mouse_move(
         &self,
         screen_x: f64,
         screen_y: f64,
@@ -276,7 +276,7 @@ impl GraphCanvas {
         Ok(())
     }
 
-    pub fn handle_mouse_up(&self, screen_x: f64, screen_y: f64) -> Result<(), JsValue> {
+    pub(crate) fn handle_mouse_up(&self, screen_x: f64, screen_y: f64) -> Result<(), JsValue> {
         let mut ix = self.interaction.lock().map_err(log_and_convert_error)?;
         let mut graph = self.graph.lock().map_err(log_and_convert_error)?;
         let events = self.events.lock().map_err(log_and_convert_error)?;
@@ -481,7 +481,7 @@ impl GraphCanvas {
     }
 
     /// Update the node template that should be added in AddNode mode.
-    pub fn set_current_node_template(&self, template_id: &str) {
+    pub(crate) fn set_current_node_template(&self, template_id: &str) {
         self.interaction
             .lock()
             .unwrap()

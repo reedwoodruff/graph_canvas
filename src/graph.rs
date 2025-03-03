@@ -281,10 +281,10 @@ pub enum SlotType {
     Outgoing,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Graph {
-    pub(crate) node_templates: HashMap<String, NodeTemplate>,
-    pub(crate) node_instances: HashMap<String, NodeInstance>,
+    pub node_templates: HashMap<String, NodeTemplate>,
+    pub node_instances: HashMap<String, NodeInstance>,
 }
 
 impl Default for Graph {

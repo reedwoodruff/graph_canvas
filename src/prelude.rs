@@ -7,8 +7,12 @@ pub use crate::config::TemplateIdentifier;
 pub use crate::graph::Connection;
 pub use crate::graph::FieldTemplate;
 pub use crate::graph::FieldType;
+pub use crate::graph::Graph;
 pub use crate::graph::NodeTemplate;
+pub use crate::graph::NodeInstance;
 pub use crate::graph::SlotPosition;
+pub use crate::graph::SlotInstance;
+
 pub use crate::graph::SlotTemplate;
 pub use crate::graph::SlotType;
 #[cfg(feature = "js")]

@@ -1,6 +1,7 @@
 use std::collections::HashMap;
+use wasm_bindgen::JsCast;
 
-use web_sys::HtmlCanvasElement;
+use web_sys::window;
 
 use crate::{graph::Graph, interaction::InteractionState};
 
@@ -24,15 +25,15 @@ pub enum LayoutType {
 pub struct LayoutEngine {
     current_type: LayoutType,
     snapshots: HashMap<LayoutType, LayoutSnapshot>,
-    canvas_ref: HtmlCanvasElement,
+    canvas_id: String,
 }
 
 impl LayoutEngine {
-    pub fn new(canvas_ref: HtmlCanvasElement) -> Self {
+    pub fn new(canvas_ref_id: String) -> Self {
         Self {
             current_type: LayoutType::Free,
             snapshots: HashMap::new(),
-            canvas_ref,
+            canvas_id: canvas_ref_id,
         }
     }
 
@@ -186,9 +187,17 @@ impl LayoutEngine {
         let level_spacing = 250.0;
         let node_spacing = 150.0;
 
+        let canvas = window()
+            .unwrap()
+            .document()
+            .unwrap()
+            .get_element_by_id(&self.canvas_id)
+            .unwrap()
+            .dyn_into::<web_sys::HtmlCanvasElement>()
+            .unwrap();
         // Canvas size offset
-        let canvas_width_offset = self.canvas_ref.get_bounding_client_rect().width() / 10.0;
-        let canvas_height_offset = self.canvas_ref.get_bounding_client_rect().height() / 2.0;
+        let canvas_width_offset = canvas.get_bounding_client_rect().width() / 10.0;
+        let canvas_height_offset = canvas.get_bounding_client_rect().height() / 2.0;
 
         for (level, nodes) in &nodes_by_level {
             let level_height = nodes.len() as f64 * node_spacing;

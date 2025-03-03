@@ -6,6 +6,17 @@ use crate::{graph::Connection, log};
 
 #[derive(Debug, Clone)]
 pub enum GraphError {
+    SaveFailed {
+        reason: Box<GraphError>,
+    },
+    SlotMalformed {
+        template_name: String,
+        slot_name: String,
+        min: usize,
+        max: Option<usize>,
+        actual: usize,
+    },
+    GraphLockFailed,
     SetupFailed(JsValue),
     ConfigurationError(String, Box<GraphError>),
     NodeNotFound(String),
@@ -58,6 +69,7 @@ pub enum GraphError {
         name: String,
     },
     NodeInstanceLocked,
+    ListOfErrors(Vec<GraphError>),
     Other(String),
 }
 
@@ -173,6 +185,27 @@ impl fmt::Display for GraphError {
                 write!(f, "Some slots in the requested action were not cleared")?;
                 for failure in failures {
                     write!(f, "{}", failure)?;
+                }
+                Ok(())
+            }
+            GraphError::SaveFailed { reason } => {
+                write!(f, "Save action failed. \nReason: {:#?}", reason)
+            }
+            GraphError::GraphLockFailed => {
+                write!(f, "Could not obtain graph lock")
+            }
+            GraphError::SlotMalformed {
+                template_name,
+                slot_name,
+                min,
+                max,
+                actual,
+            } => {
+                write!(f, "Slot is not well-formed. \nTemplate Name: {}, Slot Name: {}, Minimum Connections: {}, Maximum Connections: {:#?}, Current Number of Instances: {}", template_name, slot_name, min, max, actual)
+            }
+            GraphError::ListOfErrors(vec) => {
+                for error in vec {
+                    write!(f, "{:#?}", error)?;
                 }
                 Ok(())
             }

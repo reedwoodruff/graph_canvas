@@ -1,7 +1,6 @@
 #[cfg(feature = "js")]
 use errors::IntoJsError;
 use errors::{GraphError, GraphResult};
-use graph::Graph;
 use interaction::{InteractionMode, InteractionState};
 use layout::{LayoutEngine, LayoutType};
 use std::collections::HashMap;
@@ -30,7 +29,10 @@ pub use config::TemplateIdentifier;
 pub use graph::Connection;
 pub use graph::FieldTemplate;
 pub use graph::FieldType;
+pub use graph::Graph;
 pub use graph::NodeTemplate;
+pub use graph::NodeInstance;
+pub use graph::SlotInstance;
 pub use graph::SlotPosition;
 pub use graph::SlotTemplate;
 pub use graph::SlotType;
@@ -69,7 +71,7 @@ pub struct GraphCanvas {
     // settings: Arc<GraphCanvasSettings>,
     config: Arc<GraphCanvasConfig>,
     graph: Arc<Mutex<Graph>>,
-    canvas: HtmlCanvasElement,
+    canvas_id: String,
     interaction: Arc<Mutex<InteractionState>>,
     events: Arc<Mutex<events::EventSystem>>,
     layout_engine: Arc<Mutex<LayoutEngine>>,
@@ -132,14 +134,15 @@ impl GraphCanvas {
             config: Arc::new(config.clone()),
             interaction: Arc::new(Mutex::new(InteractionState::new())),
             graph: Arc::new(Mutex::new(graph)),
-            canvas: canvas_clone.clone(),
+            canvas_id: canvas.id().to_string(),
             events,
-            layout_engine: Arc::new(Mutex::new(LayoutEngine::new(canvas_clone))),
+            layout_engine: Arc::new(Mutex::new(LayoutEngine::new(canvas_clone.id().clone()))),
         };
 
         // Setup toolbar based on config
         // if config.show_default_toolbar {
-        GraphCanvas::setup_default_toolbar(&toolbar_container, &config, &graph_canvas)
+        graph_canvas
+            .setup_default_toolbar(&toolbar_container, &config, &graph_canvas)
             .map_err(GraphError::SetupFailed)?;
         // }
         // if let Some(custom_toolbar) = &config.custom_toolbar {
@@ -161,9 +164,9 @@ impl GraphCanvas {
     ) -> Result<(HtmlCanvasElement, HtmlDivElement), JsValue> {
         // Create canvas
         let document = window().unwrap().document().unwrap();
-        let canvas = document
-            .create_element("canvas")?
-            .dyn_into::<HtmlCanvasElement>()?;
+        let canvas = document.create_element("canvas")?;
+        canvas.set_id("graph-canvas-canvas-element");
+        let canvas = canvas.dyn_into::<HtmlCanvasElement>()?;
 
         // Set canvas style to fill container
         canvas.style().set_property("width", "100%")?;
@@ -223,6 +226,7 @@ impl GraphCanvas {
     }
 
     fn setup_default_toolbar(
+        &self,
         toolbar_container: &HtmlDivElement,
         config: &GraphCanvasConfig,
         graph_canvas: &GraphCanvas,
@@ -1014,8 +1018,16 @@ impl GraphCanvas {
             }
         }) as Box<dyn FnMut(_)>);
 
+        let canvas = window()
+            .unwrap()
+            .document()
+            .unwrap()
+            .get_element_by_id(&self.canvas_id)
+            .unwrap()
+            .dyn_into::<web_sys::HtmlCanvasElement>()
+            .unwrap();
         // Attach the handler to the canvas's mouseup event
-        graph_canvas.canvas.add_event_listener_with_callback(
+        canvas.add_event_listener_with_callback(
             "mouseup",
             node_selection_handler.as_ref().unchecked_ref(),
         )?;
@@ -1027,7 +1039,15 @@ impl GraphCanvas {
     fn setup_events(&self) -> Result<(), GraphError> {
         // Mouse Down Handler
         let self_clone = self.clone();
-        let canvas_clone = self.canvas.clone();
+        let canvas = window()
+            .unwrap()
+            .document()
+            .unwrap()
+            .get_element_by_id(&self.canvas_id)
+            .unwrap()
+            .dyn_into::<web_sys::HtmlCanvasElement>()
+            .unwrap();
+        let canvas_clone = canvas.clone();
         let mouse_down = Closure::wrap(Box::new(move |event: web_sys::MouseEvent| {
             let rect = canvas_clone.get_bounding_client_rect();
             let x = event.client_x() as f64 - rect.left();
@@ -1037,7 +1057,7 @@ impl GraphCanvas {
 
         // Mouse Move Handler
         let self_clone = self.clone();
-        let canvas_clone = self.canvas.clone();
+        let canvas_clone = canvas.clone();
         let mouse_move = Closure::wrap(Box::new(move |event: web_sys::MouseEvent| {
             let rect = canvas_clone.get_bounding_client_rect();
             let x = event.client_x() as f64 - rect.left();
@@ -1051,7 +1071,7 @@ impl GraphCanvas {
 
         // Mouse Up Handler
         let self_clone = self.clone();
-        let canvas_clone = self.canvas.clone();
+        let canvas_clone = canvas.clone();
         let mouse_up = Closure::wrap(Box::new(move |event: web_sys::MouseEvent| {
             let rect = canvas_clone.get_bounding_client_rect();
             let x = event.client_x() as f64 - rect.left();
@@ -1062,14 +1082,15 @@ impl GraphCanvas {
             }
         }) as Box<dyn FnMut(_)>);
 
+        let canvas_clone = canvas.clone();
         // Add event listeners
-        self.canvas
+        canvas_clone
             .add_event_listener_with_callback("mousedown", mouse_down.as_ref().unchecked_ref())
             .map_err(GraphError::SetupFailed)?;
-        self.canvas
+        canvas_clone
             .add_event_listener_with_callback("mousemove", mouse_move.as_ref().unchecked_ref())
             .map_err(GraphError::SetupFailed)?;
-        self.canvas
+        canvas_clone
             .add_event_listener_with_callback("mouseup", mouse_up.as_ref().unchecked_ref())
             .map_err(GraphError::SetupFailed)?;
 
@@ -1209,5 +1230,71 @@ impl GraphCanvas {
             default_color: "red".to_string(),
             can_modify_fields: true,
         }
+    }
+    pub fn save(&self) -> GraphResult<Graph> {
+        let graph = self.graph.try_lock();
+        if graph.is_err() {
+            return Err(GraphError::SaveFailed {
+                reason: Box::new(GraphError::GraphLockFailed),
+            });
+        }
+        let graph = graph.unwrap();
+        self.check_conformity(&graph)?;
+        Ok(graph.clone())
+    }
+
+    fn check_conformity(&self, graph: &Graph) -> GraphResult<()> {
+        let node_errors = graph
+            .node_instances
+            .values()
+            .filter_map(|instance| {
+                let template = graph
+                    .get_node_template_by_identifier(&TemplateIdentifier::Id(
+                        instance.template_id.clone(),
+                    ))
+                    .unwrap();
+                let slot_errors = instance
+                    .slots
+                    .iter()
+                    .filter_map(|slot_instance| {
+                        let slot_template = template
+                            .slot_templates
+                            .iter()
+                            .find(|slot_template| {
+                                slot_template.id == slot_instance.slot_template_id
+                            })
+                            .unwrap();
+                        if slot_template.min_connections > slot_instance.connections.len()
+                            || slot_template
+                                .max_connections
+                                .is_some_and(|max_connections| {
+                                    max_connections < slot_instance.connections.len()
+                                })
+                        {
+                            return Some(GraphError::SlotMalformed {
+                                template_name: template.name.clone(),
+                                slot_name: slot_template.name.clone(),
+                                min: slot_template.min_connections,
+                                max: slot_template.max_connections,
+                                actual: slot_instance.connections.len(),
+                            });
+                        }
+                        None
+                    })
+                    .collect::<Vec<_>>();
+                if slot_errors.is_empty() {
+                    return None;
+                }
+                Some(slot_errors)
+            })
+            .collect::<Vec<_>>();
+        if node_errors.is_empty() {
+            return Ok(());
+        }
+        Err(GraphError::SaveFailed {
+            reason: Box::new(GraphError::ListOfErrors(
+                node_errors.into_iter().flatten().collect::<Vec<_>>(),
+            )),
+        })
     }
 }

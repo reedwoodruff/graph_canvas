@@ -43,6 +43,7 @@ tsify = { version = "*", optional = true }
 serde-wasm-bindgen = { version = "0.6", optional = true }
 rand = "0.9"
 getrandom = { version = "0.3", features = ["wasm_js"] }
+derivative = "2"
 
 [dependencies.uuid]
 version = "1"

@@ -646,8 +646,15 @@ impl GraphCanvas {
 
     // Rendering - skips if locked
     pub fn render(&self) -> Result<(), JsValue> {
-        let context = self
-            .canvas
+        let canvas = window()
+            .unwrap()
+            .document()
+            .unwrap()
+            .get_element_by_id(&self.canvas_id)
+            .unwrap()
+            .dyn_into::<web_sys::HtmlCanvasElement>()
+            .unwrap();
+        let context = canvas
             .get_context("2d")?
             .unwrap()
             .dyn_into::<CanvasRenderingContext2d>()?;
@@ -675,12 +682,16 @@ impl GraphCanvas {
         graph: &Graph,
         interaction: &mut InteractionState,
     ) -> Result<(), JsValue> {
-        context.clear_rect(
-            0.0,
-            0.0,
-            self.canvas.width() as f64,
-            self.canvas.height() as f64,
-        );
+        let canvas = window()
+            .unwrap()
+            .document()
+            .unwrap()
+            .get_element_by_id(&self.canvas_id)
+            .unwrap()
+            .dyn_into::<web_sys::HtmlCanvasElement>()
+            .unwrap();
+
+        context.clear_rect(0.0, 0.0, canvas.width() as f64, canvas.height() as f64);
 
         // Save the current transform
         context.save();

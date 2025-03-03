@@ -3,7 +3,9 @@ use crate::config::{
     GraphCanvasConfig, InitialConnection, InitialFieldValue, InitialNode, TemplateGroup,
     TemplateIdentifier,
 };
-use crate::graph::{FieldTemplate, FieldType, NodeTemplate, SlotPosition, SlotTemplate, SlotType};
+use crate::graph::{
+    FieldTemplate, FieldType, Graph, NodeTemplate, SlotPosition, SlotTemplate, SlotType,
+};
 use serde::{Deserialize, Serialize};
 use tsify::Tsify;
 

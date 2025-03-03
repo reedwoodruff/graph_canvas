@@ -1,4 +1,6 @@
-use crate::graph::NodeTemplate;
+use derivative::Derivative;
+
+use crate::graph::{Graph, NodeTemplate};
 use std::collections::{HashMap, HashSet};
 
 #[derive(Clone, Debug)]
@@ -20,7 +22,8 @@ impl TemplateGroup {
     }
 }
 
-#[derive(Clone, Debug)]
+#[derive(Derivative)]
+#[derivative(Clone, Debug)]
 pub struct GraphCanvasConfig {
     // Visual settings
     pub context_menu_size: (f64, f64),
@@ -142,6 +145,14 @@ pub enum TemplateIdentifier {
 impl From<u128> for TemplateIdentifier {
     fn from(id: u128) -> Self {
         TemplateIdentifier::Id(uuid::Uuid::from_u128(id).to_string())
+    }
+}
+impl ToString for TemplateIdentifier {
+    fn to_string(&self) -> String {
+        match self {
+            TemplateIdentifier::Name(name) => name.clone(),
+            TemplateIdentifier::Id(id) => id.clone(),
+        }
     }
 }
 
