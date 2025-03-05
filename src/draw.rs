@@ -646,11 +646,15 @@ impl GraphCanvas {
 
     // Rendering - skips if locked
     pub fn render(&self) -> Result<(), JsValue> {
-        let canvas = window()
+        let element = window()
             .unwrap()
             .document()
             .unwrap()
-            .get_element_by_id(&self.canvas_id)
+            .get_element_by_id(&self.canvas_id);
+        if element.is_none() {
+            return Err(JsValue::from_str("Element not found"));
+        }
+        let canvas = element
             .unwrap()
             .dyn_into::<web_sys::HtmlCanvasElement>()
             .unwrap();

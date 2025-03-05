@@ -2,7 +2,7 @@
 use errors::IntoJsError;
 use errors::{GraphError, GraphResult};
 use interaction::{InteractionMode, InteractionState};
-use layout::{LayoutEngine, LayoutType};
+use layout::LayoutEngine;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use wasm_bindgen::{prelude::*, JsCast};
@@ -30,8 +30,8 @@ pub use graph::Connection;
 pub use graph::FieldTemplate;
 pub use graph::FieldType;
 pub use graph::Graph;
-pub use graph::NodeTemplate;
 pub use graph::NodeInstance;
+pub use graph::NodeTemplate;
 pub use graph::SlotInstance;
 pub use graph::SlotPosition;
 pub use graph::SlotTemplate;
@@ -50,6 +50,7 @@ pub use js::JsPartialNodeTemplate;
 pub use js::JsPartialSlotTemplate;
 #[cfg(feature = "js")]
 pub use js::JsTemplateGroup;
+pub use layout::LayoutType;
 
 #[wasm_bindgen]
 extern "C" {
@@ -448,6 +449,7 @@ impl GraphCanvas {
         )?;
         layout_select.set_inner_html(
             r#"
+            <option value="force">Force Layout</option>
             <option value="free">Free Layout</option>
             <option value="hierarchical">Hierarchical Layout</option>
             "#,
@@ -704,6 +706,7 @@ impl GraphCanvas {
                     .unwrap();
                 let layout_type = match target.value().as_str() {
                     "hierarchical" => LayoutType::Hierarchical,
+                    "force" => LayoutType::ForceDirected,
                     _ => LayoutType::Free,
                 };
 
@@ -1296,5 +1299,19 @@ impl GraphCanvas {
                 node_errors.into_iter().flatten().collect::<Vec<_>>(),
             )),
         })
+    }
+    pub fn apply_layout(&mut self, layout: LayoutType) -> Result<(), GraphError> {
+        match self.layout_engine.lock() {
+            Ok(mut engine) => {
+                match self.graph.lock() {
+                    Ok(mut graph) => {
+                        engine.switch_layout(layout, &mut graph);
+                    }
+                    Err(_) => return Err(GraphError::GraphLockFailed),
+                }
+                Ok(())
+            }
+            Err(_) => Err(GraphError::GraphLockFailed),
+        }
     }
 }
