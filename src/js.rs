@@ -3,9 +3,7 @@ use crate::config::{
     GraphCanvasConfig, InitialConnection, InitialFieldValue, InitialNode, TemplateGroup,
     TemplateIdentifier,
 };
-use crate::graph::{
-    FieldTemplate, FieldType, Graph, NodeTemplate, SlotPosition, SlotTemplate, SlotType,
-};
+use crate::graph::{FieldTemplate, FieldType, NodeTemplate, SlotPosition, SlotTemplate, SlotType};
 use serde::{Deserialize, Serialize};
 use tsify::Tsify;
 
@@ -378,7 +376,7 @@ pub struct JsInitialFieldValue {
 impl From<JsInitialFieldValue> for InitialFieldValue {
     fn from(js_field: JsInitialFieldValue) -> Self {
         Self {
-            field_id: js_field.field_id,
+            field_template_id: js_field.field_id,
             value: js_field.value,
         }
     }

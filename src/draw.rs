@@ -628,13 +628,15 @@ impl GraphCanvas {
 
         *g.borrow_mut() = Some(Closure::wrap(Box::new(move || {
             // Render the graph using the cloned self
-            canvas.render().unwrap();
-
-            // Schedule next frame
-            window()
-                .unwrap()
-                .request_animation_frame(f.borrow().as_ref().unwrap().as_ref().unchecked_ref())
-                .unwrap();
+            if let Ok(_) = canvas.render() {
+                // Schedule next frame
+                window()
+                    .unwrap()
+                    .request_animation_frame(f.borrow().as_ref().unwrap().as_ref().unchecked_ref())
+                    .unwrap();
+            } else {
+                return;
+            }
         }) as Box<dyn FnMut()>));
 
         window()

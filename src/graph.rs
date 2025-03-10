@@ -354,15 +354,6 @@ impl Graph {
                             node.template_identifier.clone()
                         ))),
                     ))?;
-                // let template_id = self
-                //     .get_node_template_by_name(&node.template_name.clone())
-                //     .ok_or(
-                //         GraphError::ConfigurationError(
-                //                                 "Could not create initial node".to_string(),
-                //                                 Box::new(GraphError::TemplateNotFound(node.template_name.clone())),
-                //                             ),
-
-                //     );
 
                 let instance_id = node.id.clone().unwrap_or(generate_id());
                 let instance = NodeInstance {
@@ -392,13 +383,14 @@ impl Graph {
                         .field_templates
                         .iter()
                         .map(|field_template| {
-                            let value =
-                                match node.initial_field_values.iter().find(|initial_field| {
-                                    initial_field.field_id == field_template.id
-                                }) {
-                                    Some(found_field) => found_field.value.clone(),
-                                    None => field_template.default_value.clone(),
-                                };
+                            let matching_field =
+                                node.initial_field_values.iter().find(|initial_field| {
+                                    initial_field.field_template_id == field_template.id
+                                });
+                            let value = match matching_field {
+                                Some(found_field) => found_field.value.clone(),
+                                None => field_template.default_value.clone(),
+                            };
                             FieldInstance {
                                 node_instance_id: instance_id.clone(),
                                 field_template_id: field_template.id.clone(),
@@ -410,15 +402,6 @@ impl Graph {
                 };
 
                 self.node_instances.insert(instance_id.clone(), instance);
-                // let new_instance =
-                //     self.create_instance(&template.template_id, node.x, node.y, node.id.clone());
-                // let new_instance = match new_instance {
-                //     Ok(inner) => inner,
-                //     Err(err) => {
-                //         log(&format!("{:?}", err));
-                //         return Err(err);
-                //     }
-                // };
 
                 // Update instance properties if needed
                 if let Some(instance) = self.node_instances.get_mut(&instance_id) {
@@ -436,8 +419,6 @@ impl Graph {
         for item in new_ids {
             if let Ok((host_node_id, node)) = item {
                 for initial_connection in &node.initial_connections {
-                    // log(&format!("{:#?}", self));
-                    // log(&host_node_id);
                     let host_node_caps = self
                         .get_node_capabilities(&host_node_id)
                         .expect("Just created node, should exist");

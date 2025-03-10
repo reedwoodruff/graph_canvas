@@ -191,6 +191,6 @@ pub struct InitialConnection {
 
 #[derive(Clone, Debug)]
 pub struct InitialFieldValue {
-    pub field_id: String,
+    pub field_template_id: String,
     pub value: String,
 }
