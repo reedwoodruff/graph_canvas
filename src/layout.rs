@@ -47,7 +47,7 @@ impl ViewState {
             pan_x: 0.0,
             pan_y: 0.0,
             zoom: 1.0,
-            physics_enabled: layout_type == LayoutType::ForceDirected,
+            physics_enabled: true,
         }
     }
 }
@@ -67,15 +67,17 @@ pub struct LayoutEngine {
 impl LayoutEngine {
     pub fn new(canvas_ref_id: String) -> Self {
         // Create initial empty views - snapshots will be generated on first use
-        let empty_snapshot = LayoutSnapshot { positions: HashMap::new() };
-        
+        let empty_snapshot = LayoutSnapshot {
+            positions: HashMap::new(),
+        };
+
         // Create three views with different default layouts
         let views = vec![
             ViewState::new(LayoutType::ForceDirected, empty_snapshot.clone()),
             ViewState::new(LayoutType::Hierarchical, empty_snapshot.clone()),
             ViewState::new(LayoutType::Free, empty_snapshot.clone()),
         ];
-        
+
         Self {
             current_view_index: 0, // Start with view 1 (ForceDirected)
             views,
@@ -91,68 +93,79 @@ impl LayoutEngine {
     pub fn switch_layout(&mut self, layout_type: LayoutType, graph: &mut Graph) {
         // Save current state of current view (keeping the current view index)
         self.save_current_view_state(graph);
-        
+
         // Update current view to use the new layout type
-        let current_view = &mut self.views[self.current_view_index];
-        current_view.layout_type = layout_type.clone();
-        
+
         // Generate appropriate layout snapshot if the view doesn't have one yet or it's Force layout
         // Always regenerate Force layout when switching to it to ensure it's applied
-        let needs_layout = current_view.snapshot.positions.is_empty() || layout_type == LayoutType::ForceDirected;
-        
-        if needs_layout {
+        let needs_layout = self.views[self.current_view_index]
+            .snapshot
+            .positions
+            .is_empty()
+            || layout_type == LayoutType::ForceDirected;
+
+        let snapshot = if needs_layout {
             let new_snapshot = match layout_type {
                 LayoutType::Free => self.generate_free_layout(graph),
                 LayoutType::Hierarchical => self.generate_hierarchical_layout(graph),
                 LayoutType::ForceDirected => self.generate_force_directed_layout(graph),
             };
-            current_view.snapshot = new_snapshot;
-        }
-        
+            new_snapshot
+        } else {
+            self.views[self.current_view_index].snapshot.clone()
+        };
+        self.views[self.current_view_index].layout_type = layout_type.clone();
+
         // Apply the layout snapshot from the current view
-        self.apply_snapshot(graph, &current_view.snapshot);
-        
+        self.apply_snapshot(graph, &snapshot);
+
         // Set physics based on layout type
-        current_view.physics_enabled = layout_type == LayoutType::ForceDirected;
+        self.views[self.current_view_index].physics_enabled =
+            layout_type == LayoutType::ForceDirected;
     }
-    
+
     // Method to switch to a specific view by index (0, 1, or 2)
-    pub fn switch_to_view(&mut self, view_index: usize, graph: &mut Graph, ix: &mut InteractionState) {
+    pub fn switch_to_view(
+        &mut self,
+        view_index: usize,
+        graph: &mut Graph,
+        ix: &mut InteractionState,
+    ) {
         if view_index >= self.views.len() {
             return; // Invalid view index
         }
-        
+
         // Save current view state before switching
         self.save_current_view_state(graph);
-        
+
         // Switch to new view
         self.current_view_index = view_index;
         let current_view = &self.views[self.current_view_index];
-        
+
         // Apply the view's state
         self.apply_snapshot(graph, &current_view.snapshot);
-        
+
         // Set interaction state from view
         ix.view_transform.pan_x = current_view.pan_x;
         ix.view_transform.pan_y = current_view.pan_y;
         ix.view_transform.zoom = current_view.zoom;
     }
-    
+
     // Get current view index
     pub fn get_current_view_index(&self) -> usize {
         self.current_view_index
     }
-    
+
     // Get layout type of current view
     pub fn get_current_layout_type(&self) -> LayoutType {
         self.views[self.current_view_index].layout_type.clone()
     }
-    
+
     // Check if physics is enabled for the current view
     pub fn is_physics_enabled(&self) -> bool {
         self.views[self.current_view_index].physics_enabled
     }
-    
+
     // Toggle physics for the current view
     pub fn toggle_physics(&mut self) -> bool {
         let current_view = &mut self.views[self.current_view_index];
@@ -162,15 +175,15 @@ impl LayoutEngine {
 
     pub fn reset_current_layout(&mut self, graph: &mut Graph, ix: &mut InteractionState) {
         // Regenerate the current layout snapshot based on the current view's layout type
-        let current_view = &mut self.views[self.current_view_index];
-        let layout_type = current_view.layout_type.clone();
-        
+        let layout_type = self.views[self.current_view_index].layout_type.clone();
         let new_snapshot = match layout_type {
             LayoutType::Free => self.generate_free_layout(graph),
             LayoutType::Hierarchical => self.generate_hierarchical_layout(graph),
             LayoutType::ForceDirected => self.generate_force_directed_layout(graph),
         };
-        
+
+        let current_view = &mut self.views[self.current_view_index];
+
         // Update the current view's snapshot
         current_view.snapshot = new_snapshot.clone();
 
@@ -178,7 +191,7 @@ impl LayoutEngine {
         current_view.pan_x = 0.0;
         current_view.pan_y = 0.0;
         current_view.zoom = 1.0;
-        
+
         // Reset interaction state
         ix.view_transform.pan_x = 0.0;
         ix.view_transform.pan_y = 0.0;
@@ -200,7 +213,7 @@ impl LayoutEngine {
                 },
             );
         }
-        
+
         // Save the snapshot to the current view
         self.views[self.current_view_index].snapshot = LayoutSnapshot { positions };
     }
@@ -653,7 +666,7 @@ impl LayoutEngine {
         if !self.views[self.current_view_index].physics_enabled {
             return;
         }
-        
+
         // Get canvas dimensions for simulation bounds
         let canvas = window()
             .unwrap()
@@ -665,23 +678,23 @@ impl LayoutEngine {
             .unwrap();
 
         let canvas_width = canvas.get_bounding_client_rect().width();
-        
+
         // Initialize simulation parameters
         self.force_simulation_active = true;
         self.fixed_node_id = Some(node_id.to_string());
         self.simulation_iteration = 0;
         self.temperature = canvas_width * 0.3; // Initial temperature - smaller than full sim for more control
-        
+
         // Build connection graph
         self.build_connection_graph(graph);
     }
-    
+
     // Stop force simulation
     pub fn stop_force_simulation(&mut self) {
         self.force_simulation_active = false;
         self.fixed_node_id = None;
     }
-    
+
     // Save view transform state from interaction to current view
     pub fn save_view_transform(&mut self, ix: &InteractionState) {
         let current_view = &mut self.views[self.current_view_index];
@@ -689,16 +702,16 @@ impl LayoutEngine {
         current_view.pan_y = ix.view_transform.pan_y;
         current_view.zoom = ix.view_transform.zoom;
     }
-    
+
     // Build graph of node connections for force calculation
     fn build_connection_graph(&mut self, graph: &Graph) {
         self.connections.clear();
-        
+
         // Initialize with empty vectors
         for id in graph.node_instances.keys() {
             self.connections.insert(id.clone(), Vec::new());
         }
-        
+
         // Build connections graph (bidirectional for physics simulation)
         for (id, instance) in &graph.node_instances {
             for slot in &instance.slots {
@@ -716,16 +729,17 @@ impl LayoutEngine {
             }
         }
     }
-    
+
     // Run a single iteration of the force simulation while a node is being dragged
     pub fn run_simulation_step(&mut self, graph: &mut Graph) {
         // Check both that simulation is active and physics is enabled for the current view
-        if !self.force_simulation_active || 
-           self.fixed_node_id.is_none() || 
-           !self.views[self.current_view_index].physics_enabled {
+        if !self.force_simulation_active
+            || self.fixed_node_id.is_none()
+            || !self.views[self.current_view_index].physics_enabled
+        {
             return;
         }
-        
+
         // Get canvas dimensions for simulation bounds
         let canvas = window()
             .unwrap()
@@ -738,7 +752,7 @@ impl LayoutEngine {
 
         let canvas_width = canvas.get_bounding_client_rect().width();
         let canvas_height = canvas.get_bounding_client_rect().height();
-        
+
         // Extract current positions from graph
         let mut positions: HashMap<String, NodePosition> = HashMap::new();
         for (id, instance) in &graph.node_instances {
@@ -750,106 +764,106 @@ impl LayoutEngine {
                 },
             );
         }
-        
+
         // Parameters for interactive simulation
         let repulsive_force = canvas_width * 15.0; // Slightly less than full sim
         let attractive_force = 0.01; // Stronger for more responsive dragging
         let center_gravity = 0.001; // Less gravity to allow free movement
         let cooling_factor = 0.995; // Slower cooling to maintain responsiveness
-        
+
         // Calculate forces for this iteration
         let mut forces: HashMap<String, (f64, f64)> = HashMap::new();
-        
+
         // Initialize forces to zero
         for id in positions.keys() {
             forces.insert(id.clone(), (0.0, 0.0));
         }
-        
+
         // Calculate repulsive forces (nodes repel each other)
         let node_ids: Vec<String> = positions.keys().cloned().collect();
         for i in 0..node_ids.len() {
             for j in (i + 1)..node_ids.len() {
                 let id1 = &node_ids[i];
                 let id2 = &node_ids[j];
-                
+
                 let pos1 = &positions[id1];
                 let pos2 = &positions[id2];
-                
+
                 let dx = pos1.x - pos2.x;
                 let dy = pos1.y - pos2.y;
-                
+
                 // Avoid division by zero by adding a small value
                 let distance_sq = dx * dx + dy * dy + 0.01;
                 let distance = distance_sq.sqrt();
-                
+
                 // Repulsive force is inversely proportional to distance
                 let force = repulsive_force / distance_sq;
-                
+
                 // Direction from node2 to node1 normalized
                 let force_x = force * dx / distance;
                 let force_y = force * dy / distance;
-                
+
                 // Add force to both nodes (action = -reaction)
                 let (fx1, fy1) = forces.get(id1).unwrap();
                 forces.insert(id1.clone(), (fx1 + force_x, fy1 + force_y));
-                
+
                 let (fx2, fy2) = forces.get(id2).unwrap();
                 forces.insert(id2.clone(), (fx2 - force_x, fy2 - force_y));
             }
         }
-        
+
         // Calculate attractive forces (connected nodes attract each other)
         for (id, connected_ids) in &self.connections {
             let pos1 = &positions[id];
-            
+
             for connected_id in connected_ids {
                 let pos2 = &positions[connected_id];
-                
+
                 let dx = pos1.x - pos2.x;
                 let dy = pos1.y - pos2.y;
-                
+
                 let distance = (dx * dx + dy * dy).sqrt() + 0.01;
-                
+
                 // Attractive force is proportional to distance
                 let force = attractive_force * distance;
-                
+
                 // Direction from node1 to node2 normalized
                 let force_x = force * dx / distance;
                 let force_y = force * dy / distance;
-                
+
                 // Only apply to the current node (the connected node will get its own turn)
                 let (fx, fy) = forces.get(id).unwrap();
                 forces.insert(id.clone(), (fx - force_x, fy - force_y));
             }
         }
-        
+
         // Add center gravity to pull nodes toward the center
         let center_x = canvas_width / 2.0;
         let center_y = canvas_height / 2.0;
-        
+
         for (id, pos) in &positions {
             let dx = pos.x - center_x;
             let dy = pos.y - center_y;
-            
+
             let distance = (dx * dx + dy * dy).sqrt() + 0.01;
             let force = center_gravity * distance;
-            
+
             let force_x = force * dx / distance;
             let force_y = force * dy / distance;
-            
+
             let (fx, fy) = forces.get(id).unwrap();
             forces.insert(id.clone(), (fx - force_x, fy - force_y));
         }
-        
+
         // Apply forces to update positions - but skip the fixed (dragged) node
         let fixed_node_id = self.fixed_node_id.as_ref().unwrap();
-        
+
         for (id, (force_x, force_y)) in &forces {
             // Skip the node being dragged
             if id == fixed_node_id {
                 continue;
             }
-            
+
             // Get the node instance and update its position
             if let Some(instance) = graph.node_instances.get_mut(id) {
                 // Limit maximum movement by temperature
@@ -859,28 +873,28 @@ impl LayoutEngine {
                 } else {
                     1.0
                 };
-                
+
                 // Update position - without canvas boundary constraints
                 instance.x += force_x * scale;
                 instance.y += force_y * scale;
             }
         }
-        
+
         // Cool down system gradually
         self.temperature *= cooling_factor;
         self.simulation_iteration += 1;
-        
+
         // Maintain a minimum temperature to keep the simulation responsive
         if self.temperature < 1.0 {
             self.temperature = 1.0;
         }
-        
+
         // Only stop after an extremely large number of iterations
         if self.simulation_iteration > 10000 {
             self.force_simulation_active = false;
         }
     }
-    
+
     pub fn generate_force_directed_layout(&self, graph: &Graph) -> LayoutSnapshot {
         let mut positions = HashMap::new();
 

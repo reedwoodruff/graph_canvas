@@ -665,7 +665,7 @@ impl GraphCanvas {
             .unwrap()
             .dyn_into::<CanvasRenderingContext2d>()?;
 
-        if let (Ok(graph), Ok(interaction)) =
+        if let (Ok(mut graph), Ok(interaction)) =
             (self.graph.try_lock(), &mut self.interaction.try_lock())
         {
             // Check if we need to initialize positions
@@ -675,7 +675,7 @@ impl GraphCanvas {
                 }
             });
 
-            self.do_render(&context, &graph, interaction)?;
+            self.do_render(&context, &mut graph, interaction)?;
         }
 
         Ok(())
@@ -685,9 +685,16 @@ impl GraphCanvas {
     fn do_render(
         &self,
         context: &CanvasRenderingContext2d,
-        graph: &Graph,
+        graph: &mut Graph,
         interaction: &mut InteractionState,
     ) -> Result<(), JsValue> {
+        // Run a simulation step if we're holding a node and physics is enabled
+        if interaction.is_dragging_node {
+            if let Ok(mut layout_engine) = self.layout_engine.try_lock() {
+                // The physics check is now inside run_simulation_step
+                layout_engine.run_simulation_step(graph);
+            }
+        }
         let canvas = window()
             .unwrap()
             .document()
@@ -702,10 +709,16 @@ impl GraphCanvas {
         // Save the current transform
         context.save();
 
-        // Apply pan transform
+        // Apply pan and zoom transforms
         context.translate(
             interaction.view_transform.pan_x,
             interaction.view_transform.pan_y,
+        )?;
+
+        // Apply zoom
+        context.scale(
+            interaction.view_transform.zoom,
+            interaction.view_transform.zoom,
         )?;
 
         // CHANGED ORDER: Draw nodes first, then connections
