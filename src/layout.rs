@@ -28,9 +28,33 @@ pub enum LayoutType {
     ForceDirected,
 }
 
+// A struct to represent each view's state
+#[derive(Clone, Debug)]
+pub struct ViewState {
+    pub layout_type: LayoutType,
+    pub snapshot: LayoutSnapshot,
+    pub pan_x: f64,
+    pub pan_y: f64,
+    pub zoom: f64,
+    pub physics_enabled: bool,
+}
+
+impl ViewState {
+    pub fn new(layout_type: LayoutType, snapshot: LayoutSnapshot) -> Self {
+        Self {
+            layout_type,
+            snapshot,
+            pan_x: 0.0,
+            pan_y: 0.0,
+            zoom: 1.0,
+            physics_enabled: layout_type == LayoutType::ForceDirected,
+        }
+    }
+}
+
 pub struct LayoutEngine {
-    current_type: LayoutType,
-    snapshots: HashMap<LayoutType, LayoutSnapshot>,
+    current_view_index: usize, // Which view is currently active (0, 1, or 2)
+    views: Vec<ViewState>,     // The three different views
     canvas_id: String,
     // Force simulation state
     force_simulation_active: bool,
@@ -42,9 +66,19 @@ pub struct LayoutEngine {
 
 impl LayoutEngine {
     pub fn new(canvas_ref_id: String) -> Self {
+        // Create initial empty views - snapshots will be generated on first use
+        let empty_snapshot = LayoutSnapshot { positions: HashMap::new() };
+        
+        // Create three views with different default layouts
+        let views = vec![
+            ViewState::new(LayoutType::ForceDirected, empty_snapshot.clone()),
+            ViewState::new(LayoutType::Hierarchical, empty_snapshot.clone()),
+            ViewState::new(LayoutType::Free, empty_snapshot.clone()),
+        ];
+        
         Self {
-            current_type: LayoutType::ForceDirected,
-            snapshots: HashMap::new(),
+            current_view_index: 0, // Start with view 1 (ForceDirected)
+            views,
             canvas_id: canvas_ref_id,
             force_simulation_active: false,
             fixed_node_id: None,
@@ -55,45 +89,107 @@ impl LayoutEngine {
     }
 
     pub fn switch_layout(&mut self, layout_type: LayoutType, graph: &mut Graph) {
-        // Save current positions to current layout snapshot
-        self.save_current_snapshot(graph);
-
-        // Switch to new layout
-        self.current_type = layout_type.clone();
-
-        // If we don't have a snapshot for this layout type, generate one
-        if !self.snapshots.contains_key(&layout_type) {
+        // Save current state of current view (keeping the current view index)
+        self.save_current_view_state(graph);
+        
+        // Update current view to use the new layout type
+        let current_view = &mut self.views[self.current_view_index];
+        current_view.layout_type = layout_type.clone();
+        
+        // Generate appropriate layout snapshot if the view doesn't have one yet or it's Force layout
+        // Always regenerate Force layout when switching to it to ensure it's applied
+        let needs_layout = current_view.snapshot.positions.is_empty() || layout_type == LayoutType::ForceDirected;
+        
+        if needs_layout {
             let new_snapshot = match layout_type {
                 LayoutType::Free => self.generate_free_layout(graph),
                 LayoutType::Hierarchical => self.generate_hierarchical_layout(graph),
                 LayoutType::ForceDirected => self.generate_force_directed_layout(graph),
             };
-            self.snapshots.insert(layout_type.clone(), new_snapshot);
+            current_view.snapshot = new_snapshot;
         }
-
-        // Apply the layout snapshot
-        self.apply_snapshot(graph, &self.snapshots[&layout_type]);
+        
+        // Apply the layout snapshot from the current view
+        self.apply_snapshot(graph, &current_view.snapshot);
+        
+        // Set physics based on layout type
+        current_view.physics_enabled = layout_type == LayoutType::ForceDirected;
+    }
+    
+    // Method to switch to a specific view by index (0, 1, or 2)
+    pub fn switch_to_view(&mut self, view_index: usize, graph: &mut Graph, ix: &mut InteractionState) {
+        if view_index >= self.views.len() {
+            return; // Invalid view index
+        }
+        
+        // Save current view state before switching
+        self.save_current_view_state(graph);
+        
+        // Switch to new view
+        self.current_view_index = view_index;
+        let current_view = &self.views[self.current_view_index];
+        
+        // Apply the view's state
+        self.apply_snapshot(graph, &current_view.snapshot);
+        
+        // Set interaction state from view
+        ix.view_transform.pan_x = current_view.pan_x;
+        ix.view_transform.pan_y = current_view.pan_y;
+        ix.view_transform.zoom = current_view.zoom;
+    }
+    
+    // Get current view index
+    pub fn get_current_view_index(&self) -> usize {
+        self.current_view_index
+    }
+    
+    // Get layout type of current view
+    pub fn get_current_layout_type(&self) -> LayoutType {
+        self.views[self.current_view_index].layout_type.clone()
+    }
+    
+    // Check if physics is enabled for the current view
+    pub fn is_physics_enabled(&self) -> bool {
+        self.views[self.current_view_index].physics_enabled
+    }
+    
+    // Toggle physics for the current view
+    pub fn toggle_physics(&mut self) -> bool {
+        let current_view = &mut self.views[self.current_view_index];
+        current_view.physics_enabled = !current_view.physics_enabled;
+        current_view.physics_enabled
     }
 
     pub fn reset_current_layout(&mut self, graph: &mut Graph, ix: &mut InteractionState) {
-        // Regenerate the current layout snapshot
-        let new_snapshot = match self.current_type {
+        // Regenerate the current layout snapshot based on the current view's layout type
+        let current_view = &mut self.views[self.current_view_index];
+        let layout_type = current_view.layout_type.clone();
+        
+        let new_snapshot = match layout_type {
             LayoutType::Free => self.generate_free_layout(graph),
             LayoutType::Hierarchical => self.generate_hierarchical_layout(graph),
             LayoutType::ForceDirected => self.generate_force_directed_layout(graph),
         };
-        self.snapshots
-            .insert(self.current_type.clone(), new_snapshot.clone());
+        
+        // Update the current view's snapshot
+        current_view.snapshot = new_snapshot.clone();
 
-        // Reset pan offset
+        // Reset pan and zoom
+        current_view.pan_x = 0.0;
+        current_view.pan_y = 0.0;
+        current_view.zoom = 1.0;
+        
+        // Reset interaction state
         ix.view_transform.pan_x = 0.0;
         ix.view_transform.pan_y = 0.0;
+        ix.view_transform.zoom = 1.0;
 
         // Apply the new snapshot
         self.apply_snapshot(graph, &new_snapshot);
     }
 
-    fn save_current_snapshot(&mut self, graph: &Graph) {
+    fn save_current_view_state(&mut self, graph: &Graph) {
+        // Create a snapshot of current node positions
         let mut positions = HashMap::new();
         for (id, instance) in &graph.node_instances {
             positions.insert(
@@ -104,8 +200,9 @@ impl LayoutEngine {
                 },
             );
         }
-        self.snapshots
-            .insert(self.current_type.clone(), LayoutSnapshot { positions });
+        
+        // Save the snapshot to the current view
+        self.views[self.current_view_index].snapshot = LayoutSnapshot { positions };
     }
 
     fn apply_snapshot(&self, graph: &mut Graph, snapshot: &LayoutSnapshot) {
@@ -552,8 +649,8 @@ impl LayoutEngine {
     }
     // Start force simulation when dragging a node
     pub fn start_force_simulation(&mut self, graph: &Graph, node_id: &str) {
-        // Only activate if in force-directed layout mode
-        if self.current_type != LayoutType::ForceDirected {
+        // Only activate if physics is enabled for the current view
+        if !self.views[self.current_view_index].physics_enabled {
             return;
         }
         
@@ -585,6 +682,14 @@ impl LayoutEngine {
         self.fixed_node_id = None;
     }
     
+    // Save view transform state from interaction to current view
+    pub fn save_view_transform(&mut self, ix: &InteractionState) {
+        let current_view = &mut self.views[self.current_view_index];
+        current_view.pan_x = ix.view_transform.pan_x;
+        current_view.pan_y = ix.view_transform.pan_y;
+        current_view.zoom = ix.view_transform.zoom;
+    }
+    
     // Build graph of node connections for force calculation
     fn build_connection_graph(&mut self, graph: &Graph) {
         self.connections.clear();
@@ -614,7 +719,10 @@ impl LayoutEngine {
     
     // Run a single iteration of the force simulation while a node is being dragged
     pub fn run_simulation_step(&mut self, graph: &mut Graph) {
-        if !self.force_simulation_active || self.fixed_node_id.is_none() {
+        // Check both that simulation is active and physics is enabled for the current view
+        if !self.force_simulation_active || 
+           self.fixed_node_id.is_none() || 
+           !self.views[self.current_view_index].physics_enabled {
             return;
         }
         

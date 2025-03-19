@@ -515,6 +515,11 @@ impl GraphCanvas {
         ix.view_transform.pan_x += dx;
         ix.view_transform.pan_y += dy;
         
+        // Save the view transform to the current view
+        if let Ok(mut layout_engine) = self.layout_engine.try_lock() {
+            layout_engine.save_view_transform(&ix);
+        }
+        
         Ok(())
     }
     fn internal_pointer_handle_mouse_down(
@@ -755,6 +760,12 @@ impl GraphCanvas {
                     y,
                 });
             }
+            
+            // Save current view transform to the view state
+            if let Ok(mut layout_engine) = self.layout_engine.try_lock() {
+                layout_engine.save_view_transform(ix);
+            }
+            
             ix.is_dragging_node = false;
             ix.click_initiated_on_node = None;
         } else if !ix.is_dragging_node {
@@ -918,6 +929,13 @@ impl GraphCanvas {
         if ix.is_dragging_node {
             if let Ok(mut layout_engine) = self.layout_engine.try_lock() {
                 layout_engine.stop_force_simulation();
+            }
+        }
+        
+        // If we were panning, save the view transform
+        if ix.is_panning {
+            if let Ok(mut layout_engine) = self.layout_engine.try_lock() {
+                layout_engine.save_view_transform(ix);
             }
         }
         

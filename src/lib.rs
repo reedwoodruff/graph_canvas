@@ -153,6 +153,18 @@ impl GraphCanvas {
         // }
         //
         graph_canvas.setup_events()?;
+
+        // Apply force layout when the graph is first initialized
+        {
+            let mut layout_engine = graph_canvas.layout_engine.lock().unwrap();
+            let mut graph = graph_canvas.graph.lock().unwrap();
+
+            // If the graph has nodes, apply force layout on initialization
+            if !graph.node_instances.is_empty() {
+                layout_engine.switch_layout(LayoutType::ForceDirected, &mut graph);
+            }
+        }
+
         graph_canvas.start_render_loop()?;
 
         log(&format!("{:#?}", graph_canvas));
@@ -425,33 +437,98 @@ impl GraphCanvas {
         // Add the template group container to the add node section
         add_node_section.append_child(&template_group_container)?;
 
-        // === LAYOUT SECTION ===
+        // === VIEW & LAYOUT SECTION ===
 
-        // Layout label
-        let layout_label = document.create_element("span")?;
-        layout_label.set_inner_html("Layout:");
-        layout_label.set_attribute("style", "font-size: 12px; font-weight: bold;")?;
-        layout_section.append_child(&layout_label)?;
+        // View system label
+        let views_label = document.create_element("span")?;
+        views_label.set_inner_html("Views:");
+        views_label.set_attribute("style", "font-size: 12px; font-weight: bold;")?;
+        layout_section.append_child(&views_label)?;
 
-        // Layout type selector
-        let layout_select = document.create_element("select")?;
-        layout_select.set_attribute(
+        // View tabs container
+        let view_tabs = document
+            .create_element("div")?
+            .dyn_into::<web_sys::HtmlDivElement>()?;
+        view_tabs.set_attribute("style", "display: flex; margin: 0 10px;")?;
+
+        // Create view tab buttons
+        let view_names = ["View 1", "View 2", "View 3"];
+        for (i, name) in view_names.iter().enumerate() {
+            let view_btn = document.create_element("button")?;
+            view_btn.set_attribute("data-view-index", &i.to_string())?;
+            view_btn.set_inner_html(name);
+
+            // Style - active for first view
+            let is_active = i == 0;
+            let style = format!(
+                "padding: 4px 8px; border: 1px solid #ccc; margin: 0 2px; border-radius: 4px; background: {}; cursor: pointer;",
+                if is_active { "#e6f7ff" } else { "white" }
+            );
+            view_btn.set_attribute("style", &style)?;
+            view_btn.set_attribute(
+                "class",
+                if is_active {
+                    "view-btn active"
+                } else {
+                    "view-btn"
+                },
+            )?;
+
+            view_tabs.append_child(&view_btn)?;
+        }
+        layout_section.append_child(&view_tabs)?;
+
+        // Layout buttons container
+        let layout_buttons = document.create_element("div")?;
+        layout_buttons.set_attribute("style", "display: flex; margin-left: 10px;")?;
+
+        // Force layout button
+        let force_btn = document.create_element("button")?;
+        force_btn.set_inner_html("Force");
+        force_btn.set_attribute("data-layout", "force")?;
+        force_btn.set_attribute("style", "padding: 4px 8px; border: 1px solid #ccc; border-radius: 4px 0 0 4px; background: white; cursor: pointer;")?;
+        layout_buttons.append_child(&force_btn)?;
+
+        // Hierarchical layout button
+        let hierarchical_btn = document.create_element("button")?;
+        hierarchical_btn.set_inner_html("Hierarchical");
+        hierarchical_btn.set_attribute("data-layout", "hierarchical")?;
+        hierarchical_btn.set_attribute("style", "padding: 4px 8px; border: 1px solid #ccc; border-left: none; background: white; cursor: pointer;")?;
+        layout_buttons.append_child(&hierarchical_btn)?;
+
+        // Free layout button
+        let free_btn = document.create_element("button")?;
+        free_btn.set_inner_html("Free");
+        free_btn.set_attribute("data-layout", "free")?;
+        free_btn.set_attribute("style", "padding: 4px 8px; border: 1px solid #ccc; border-left: none; border-radius: 0 4px 4px 0; background: white; cursor: pointer;")?;
+        layout_buttons.append_child(&free_btn)?;
+
+        layout_section.append_child(&layout_buttons)?;
+
+        // Physics toggle
+        let physics_toggle = document.create_element("div")?;
+        physics_toggle.set_attribute(
             "style",
-            "padding: 4px 8px; border: 1px solid #ccc; border-radius: 4px; background: white;",
+            "display: flex; align-items: center; margin-left: 10px;",
         )?;
-        layout_select.set_inner_html(
-            r#"
-            <option value="force">Force Layout</option>
-            <option value="free">Free Layout</option>
-            <option value="hierarchical">Hierarchical Layout</option>
-            "#,
-        );
-        layout_section.append_child(&layout_select)?;
+
+        let physics_label = document.create_element("label")?;
+        physics_label.set_inner_html("Physics:");
+        physics_label.set_attribute("style", "font-size: 12px; margin-right: 4px;")?;
+        physics_toggle.append_child(&physics_label)?;
+
+        let physics_checkbox = document.create_element("input")?;
+        physics_checkbox.set_attribute("type", "checkbox")?;
+        physics_checkbox.set_attribute("id", "physics-toggle")?;
+        physics_checkbox.set_attribute("checked", "")?; // Default to checked for View 1
+        physics_toggle.append_child(&physics_checkbox)?;
+
+        layout_section.append_child(&physics_toggle)?;
 
         // Reset layout button
         let reset_layout_btn = document.create_element("button")?;
-        reset_layout_btn.set_inner_html("Reset");
-        reset_layout_btn.set_attribute("style", "padding: 4px 8px; border: 1px solid #ccc; border-radius: 4px; background: white; cursor: pointer;")?;
+        reset_layout_btn.set_inner_html("Reset View");
+        reset_layout_btn.set_attribute("style", "padding: 4px 8px; border: 1px solid #ccc; border-radius: 4px; background: white; cursor: pointer; margin-left: 10px;")?;
         layout_section.append_child(&reset_layout_btn)?;
 
         // Add all sections to the toolbar
@@ -649,16 +726,68 @@ impl GraphCanvas {
             template_click.forget();
         }
 
-        // Layout controls
-        {
+        // View tab buttons event handlers
+        for i in 0..view_names.len() {
+            let view_btn = view_tabs
+                .child_nodes()
+                .get(i as u32)
+                .unwrap()
+                .dyn_into::<web_sys::HtmlElement>()?;
+
             let graph_canvas_clone = graph_canvas.clone();
-            let on_layout_change = Closure::wrap(Box::new(move |event: web_sys::Event| {
-                let target = event
-                    .target()
+            let view_tabs_clone = view_tabs.clone();
+            let physics_checkbox_clone = physics_checkbox.clone();
+
+            let on_view_change = Closure::wrap(Box::new(move |_: web_sys::MouseEvent| {
+                let view_index = i;
+
+                // Update button styles
+                for j in 0..view_tabs_clone.child_nodes().length() {
+                    let btn = view_tabs_clone
+                        .child_nodes()
+                        .get(j)
+                        .unwrap()
+                        .dyn_into::<web_sys::HtmlElement>()
+                        .unwrap();
+
+                    if j as usize == view_index {
+                        btn.set_attribute("class", "view-btn active").unwrap();
+                        btn.style().set_property("background", "#e6f7ff").unwrap();
+                    } else {
+                        btn.set_attribute("class", "view-btn").unwrap();
+                        btn.style().set_property("background", "white").unwrap();
+                    }
+                }
+
+                // Switch to the selected view
+                let mut layout_engine = graph_canvas_clone.layout_engine.lock().unwrap();
+                let mut graph = graph_canvas_clone.graph.lock().unwrap();
+                let mut ix = graph_canvas_clone.interaction.lock().unwrap();
+
+                layout_engine.switch_to_view(view_index, &mut graph, &mut ix);
+
+                // Update physics checkbox
+                let physics_enabled = layout_engine.is_physics_enabled();
+                physics_checkbox_clone
+                    .dyn_ref::<web_sys::HtmlInputElement>()
                     .unwrap()
-                    .dyn_into::<web_sys::HtmlSelectElement>()
-                    .unwrap();
-                let layout_type = match target.value().as_str() {
+                    .set_checked(physics_enabled);
+            }) as Box<dyn FnMut(_)>);
+
+            view_btn.add_event_listener_with_callback(
+                "click",
+                on_view_change.as_ref().unchecked_ref(),
+            )?;
+            on_view_change.forget();
+        }
+
+        // Layout buttons event handlers
+        for btn in [&force_btn, &hierarchical_btn, &free_btn].iter() {
+            let graph_canvas_clone = graph_canvas.clone();
+            let layout_value = btn.get_attribute("data-layout").unwrap();
+
+            let on_layout_change = Closure::wrap(Box::new(move |_: web_sys::MouseEvent| {
+                let layout_type = match layout_value.as_str() {
                     "hierarchical" => LayoutType::Hierarchical,
                     "force" => LayoutType::ForceDirected,
                     _ => LayoutType::Free,
@@ -666,16 +795,57 @@ impl GraphCanvas {
 
                 let mut layout_engine = graph_canvas_clone.layout_engine.lock().unwrap();
                 let mut graph = graph_canvas_clone.graph.lock().unwrap();
-                layout_engine.switch_layout(layout_type, &mut graph);
+                layout_engine.switch_layout(layout_type.clone(), &mut graph);
+
+                // If switched to force layout, enable physics by default
+                if layout_type == LayoutType::ForceDirected {
+                    // Updates happen inside switch_layout already
+                }
             }) as Box<dyn FnMut(_)>);
 
-            layout_select.add_event_listener_with_callback(
-                "change",
+            btn.add_event_listener_with_callback(
+                "click",
                 on_layout_change.as_ref().unchecked_ref(),
             )?;
             on_layout_change.forget();
         }
 
+        // Physics toggle
+        {
+            let graph_canvas_clone = graph_canvas.clone();
+
+            let on_physics_toggle = Closure::wrap(Box::new(move |event: web_sys::Event| {
+                let checked = event
+                    .target()
+                    .unwrap()
+                    .dyn_into::<web_sys::HtmlInputElement>()
+                    .unwrap()
+                    .checked();
+
+                let mut layout_engine = graph_canvas_clone.layout_engine.lock().unwrap();
+
+                // Toggle physics - return value is the new state
+                let enabled = layout_engine.toggle_physics();
+
+                // Make sure checkbox matches the state
+                if enabled != checked {
+                    event
+                        .target()
+                        .unwrap()
+                        .dyn_into::<web_sys::HtmlInputElement>()
+                        .unwrap()
+                        .set_checked(enabled);
+                }
+            }) as Box<dyn FnMut(_)>);
+
+            physics_checkbox.add_event_listener_with_callback(
+                "change",
+                on_physics_toggle.as_ref().unchecked_ref(),
+            )?;
+            on_physics_toggle.forget();
+        }
+
+        // Reset button
         {
             let graph_canvas_clone = graph_canvas.clone();
             let on_reset = Closure::wrap(Box::new(move |_: web_sys::MouseEvent| {
@@ -1038,23 +1208,23 @@ impl GraphCanvas {
                 Err(e) => log(&format!("{:?}", e.as_string())),
             }
         }) as Box<dyn FnMut(_)>);
-        
+
         // Mouse Wheel Handler for zooming
         let self_clone = self.clone();
         let canvas_clone = canvas.clone();
         let wheel_handler = Closure::wrap(Box::new(move |event: web_sys::WheelEvent| {
             // Prevent default browser behavior (page scrolling)
             event.prevent_default();
-            
+
             let rect = canvas_clone.get_bounding_client_rect();
             let x = event.client_x() as f64 - rect.left();
             let y = event.client_y() as f64 - rect.top();
-            
+
             // Get delta (negative for zoom in, positive for zoom out)
             let delta = event.delta_y();
-            
+
             match self_clone.handle_zoom(delta, x, y) {
-                Ok(_) => {},
+                Ok(_) => {}
                 Err(e) => log(&format!("Zoom error: {:?}", e.as_string())),
             }
         }) as Box<dyn FnMut(_)>);
