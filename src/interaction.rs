@@ -62,7 +62,7 @@ impl ViewTransform {
         // First apply pan, then account for zoom
         let center_x = x - self.pan_x;
         let center_y = y - self.pan_y;
-        
+
         // Convert from screen to graph space (divide by zoom factor)
         (center_x / self.zoom, center_y / self.zoom)
     }
@@ -73,7 +73,7 @@ impl ViewTransform {
         // First apply zoom, then add pan
         let zoomed_x = x * self.zoom;
         let zoomed_y = y * self.zoom;
-        
+
         (zoomed_x + self.pan_x, zoomed_y + self.pan_y)
     }
 }
@@ -486,40 +486,49 @@ impl GraphCanvas {
             .unwrap()
             .actively_creating_node_template_id = template_id.to_string();
     }
-    
+
     /// Handle zooming - called when the mousewheel is used
-    pub(crate) fn handle_zoom(&self, delta: f64, screen_x: f64, screen_y: f64) -> Result<(), JsValue> {
+    pub(crate) fn handle_zoom(
+        &self,
+        delta: f64,
+        screen_x: f64,
+        screen_y: f64,
+    ) -> Result<(), JsValue> {
         let mut ix = self.interaction.lock().map_err(log_and_convert_error)?;
-        
+
         // Calculate zoom factor change based on wheel delta
         let zoom_speed = 0.1; // Adjust for faster/slower zooming
-        let zoom_delta = if delta < 0.0 { 1.0 + zoom_speed } else { 1.0 - zoom_speed };
-        
+        let zoom_delta = if delta < 0.0 {
+            1.0 + zoom_speed
+        } else {
+            1.0 - zoom_speed
+        };
+
         // Calculate new zoom level with min/max constraints
         let new_zoom = (ix.view_transform.zoom * zoom_delta).max(0.1).min(5.0);
-        
+
         // Get the point under the cursor in graph coordinates before zoom
         let (graph_x, graph_y) = ix.view_transform.screen_to_graph(screen_x, screen_y);
-        
+
         // Update zoom
         ix.view_transform.zoom = new_zoom;
-        
+
         // Get the new screen position of the same graph point after zoom
         let (new_screen_x, new_screen_y) = ix.view_transform.graph_to_screen(graph_x, graph_y);
-        
+
         // Calculate the offset to keep the point under the cursor
         let dx = screen_x - new_screen_x;
         let dy = screen_y - new_screen_y;
-        
+
         // Adjust pan to keep the point under the cursor
         ix.view_transform.pan_x += dx;
         ix.view_transform.pan_y += dy;
-        
+
         // Save the view transform to the current view
         if let Ok(mut layout_engine) = self.layout_engine.try_lock() {
             layout_engine.save_view_transform(&ix);
         }
-        
+
         Ok(())
     }
     fn internal_pointer_handle_mouse_down(
@@ -528,7 +537,7 @@ impl GraphCanvas {
         y: f64,
         graph: &mut Graph,
         ix: &mut InteractionState,
-        _events: &EventSystem,
+        events: &EventSystem,
     ) -> GraphResult<()> {
         if !self.config.is_mutable {
             return Ok(());
@@ -564,12 +573,43 @@ impl GraphCanvas {
                 return Ok(());
             }
         }
-        
+
+        // If context menu is open and the click was within the menu
+        if let Some(menu) = &ix.context_menu {
+            if x >= menu.x
+                && x <= menu.x + self.config.context_menu_size.0
+                && y >= menu.y
+                && y <= menu.y + self.config.context_menu_size.1
+            {
+                // if the click was on a menu item, handle the action
+                for item in &menu.items {
+                    if let Some(bounds) = &item.bounds {
+                        if bounds.contains(x, y) {
+                            // Handle the action
+                            self.handle_context_menu_action(
+                                item.action.clone(),
+                                &menu.target_type,
+                                graph,
+                                events,
+                            )?;
+                            // Close menu after action
+                            ix.context_menu = None;
+                            events.emit(SystemEvent::ContextMenuClosed);
+                            return Ok(());
+                        }
+                    }
+                }
+
+                // If it was not on a menu-item, do nothing
+                return Ok(());
+            }
+        }
+
         // If we didn't click on any slot or node, start panning
         if self.config.is_movable {
             ix.is_panning = true;
         }
-        
+
         ix.click_initiated_on_node = None;
         ix.click_initiated_on_slot = None;
         ix.currently_selected_node_instance = None;
@@ -651,13 +691,15 @@ impl GraphCanvas {
                 events.emit(SystemEvent::ContextMenuClosed);
             }
             ix.is_dragging_node = true;
-            
+
             // Start force simulation if the layout type is force directed
             if let Ok(mut layout_engine) = self.layout_engine.try_lock() {
                 let node_id = ix.click_initiated_on_node.clone().unwrap();
                 layout_engine.start_force_simulation(graph, &node_id);
             }
         }
+
+        // Start connection drag
         if ix.is_mouse_down && ix.click_initiated_on_slot.is_some() && ix.connection_drag.is_none()
         {
             if ix.context_menu.is_some() {
@@ -665,24 +707,24 @@ impl GraphCanvas {
                 events.emit(SystemEvent::ContextMenuClosed);
             }
             let (node_id, slot_template_id) = ix.click_initiated_on_slot.clone().unwrap();
-            let slot = graph
-                .node_instances
-                .get(&node_id)
-                .unwrap()
-                .slots
-                .iter()
-                .find(|s| s.slot_template_id == slot_template_id)
-                .unwrap();
-            ix.connection_drag = Some(ConnectionDragInfo {
-                from_node: node_id.clone(),
-                from_slot: slot_template_id,
-                current_x: x,
-                current_y: y,
-            });
-            events.emit(SystemEvent::ConnectionStarted {
-                node: node_id.clone(),
-                slot: slot.slot_template_id.clone(),
-            });
+            let node_instance = graph.node_instances.get(&node_id);
+            if let Some(node_instance) = node_instance {
+                let slot = node_instance
+                    .slots
+                    .iter()
+                    .find(|s| s.slot_template_id == slot_template_id)
+                    .unwrap();
+                ix.connection_drag = Some(ConnectionDragInfo {
+                    from_node: node_id.clone(),
+                    from_slot: slot_template_id,
+                    current_x: x,
+                    current_y: y,
+                });
+                events.emit(SystemEvent::ConnectionStarted {
+                    node: node_id.clone(),
+                    slot: slot.slot_template_id.clone(),
+                });
+            }
         }
 
         if let Some(connection_drag) = &mut ix.connection_drag {
@@ -694,7 +736,7 @@ impl GraphCanvas {
                 if let Some(instance) = graph.node_instances.get_mut(selected_id) {
                     instance.x = x - instance.radius;
                     instance.y = y - instance.radius;
-                    
+
                     // Run a simulation step when in force directed mode
                     if let Ok(mut layout_engine) = self.layout_engine.try_lock() {
                         layout_engine.run_simulation_step(graph);
@@ -760,46 +802,15 @@ impl GraphCanvas {
                     y,
                 });
             }
-            
+
             // Save current view transform to the view state
             if let Ok(mut layout_engine) = self.layout_engine.try_lock() {
                 layout_engine.save_view_transform(ix);
             }
-            
+
             ix.is_dragging_node = false;
             ix.click_initiated_on_node = None;
         } else if !ix.is_dragging_node {
-            // If context menu is open and the click was within the menu
-            if let Some(menu) = &ix.context_menu {
-                if x >= menu.x
-                    && x <= menu.x + self.config.context_menu_size.0
-                    && y >= menu.y
-                    && y <= menu.y + self.config.context_menu_size.1
-                {
-                    // if the click was on a menu item, handle the action
-                    for item in &menu.items {
-                        if let Some(bounds) = &item.bounds {
-                            if bounds.contains(x, y) {
-                                // Handle the action
-                                self.handle_context_menu_action(
-                                    item.action.clone(),
-                                    &menu.target_type,
-                                    graph,
-                                    events,
-                                )?;
-                                // Close menu after action
-                                ix.context_menu = None;
-                                events.emit(SystemEvent::ContextMenuClosed);
-                                return Ok(());
-                            }
-                        }
-                    }
-
-                    // If it was not on a menu-item, do nothing
-                    return Ok(());
-                }
-            }
-
             //
             for (instance_id, instance) in graph.node_instances.iter() {
                 // Check Slots
@@ -931,14 +942,14 @@ impl GraphCanvas {
                 layout_engine.stop_force_simulation();
             }
         }
-        
+
         // If we were panning, save the view transform
         if ix.is_panning {
             if let Ok(mut layout_engine) = self.layout_engine.try_lock() {
                 layout_engine.save_view_transform(ix);
             }
         }
-        
+
         ix.is_dragging_node = false;
         ix.is_panning = false;
 
