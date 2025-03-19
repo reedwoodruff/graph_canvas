@@ -688,6 +688,12 @@ impl GraphCanvas {
         graph: &Graph,
         interaction: &mut InteractionState,
     ) -> Result<(), JsValue> {
+        // Run a simulation step if we're holding a node (even without moving)
+        if interaction.is_dragging_node {
+            if let Ok(mut layout_engine) = self.layout_engine.try_lock() {
+                layout_engine.run_simulation_step(graph);
+            }
+        }
         let canvas = window()
             .unwrap()
             .document()
@@ -702,10 +708,16 @@ impl GraphCanvas {
         // Save the current transform
         context.save();
 
-        // Apply pan transform
+        // Apply pan and zoom transforms
         context.translate(
             interaction.view_transform.pan_x,
             interaction.view_transform.pan_y,
+        )?;
+        
+        // Apply zoom
+        context.scale(
+            interaction.view_transform.zoom,
+            interaction.view_transform.zoom,
         )?;
 
         // CHANGED ORDER: Draw nodes first, then connections

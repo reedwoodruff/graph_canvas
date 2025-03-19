@@ -32,6 +32,12 @@ pub struct LayoutEngine {
     current_type: LayoutType,
     snapshots: HashMap<LayoutType, LayoutSnapshot>,
     canvas_id: String,
+    // Force simulation state
+    force_simulation_active: bool,
+    fixed_node_id: Option<String>,
+    simulation_iteration: usize,
+    temperature: f64,
+    connections: HashMap<String, Vec<String>>,
 }
 
 impl LayoutEngine {
@@ -40,6 +46,11 @@ impl LayoutEngine {
             current_type: LayoutType::ForceDirected,
             snapshots: HashMap::new(),
             canvas_id: canvas_ref_id,
+            force_simulation_active: false,
+            fixed_node_id: None,
+            simulation_iteration: 0,
+            temperature: 0.0,
+            connections: HashMap::new(),
         }
     }
 
@@ -539,6 +550,229 @@ impl LayoutEngine {
         }
         LayoutSnapshot { positions }
     }
+    // Start force simulation when dragging a node
+    pub fn start_force_simulation(&mut self, graph: &Graph, node_id: &str) {
+        // Only activate if in force-directed layout mode
+        if self.current_type != LayoutType::ForceDirected {
+            return;
+        }
+        
+        // Get canvas dimensions for simulation bounds
+        let canvas = window()
+            .unwrap()
+            .document()
+            .unwrap()
+            .get_element_by_id(&self.canvas_id)
+            .unwrap()
+            .dyn_into::<web_sys::HtmlCanvasElement>()
+            .unwrap();
+
+        let canvas_width = canvas.get_bounding_client_rect().width();
+        
+        // Initialize simulation parameters
+        self.force_simulation_active = true;
+        self.fixed_node_id = Some(node_id.to_string());
+        self.simulation_iteration = 0;
+        self.temperature = canvas_width * 0.3; // Initial temperature - smaller than full sim for more control
+        
+        // Build connection graph
+        self.build_connection_graph(graph);
+    }
+    
+    // Stop force simulation
+    pub fn stop_force_simulation(&mut self) {
+        self.force_simulation_active = false;
+        self.fixed_node_id = None;
+    }
+    
+    // Build graph of node connections for force calculation
+    fn build_connection_graph(&mut self, graph: &Graph) {
+        self.connections.clear();
+        
+        // Initialize with empty vectors
+        for id in graph.node_instances.keys() {
+            self.connections.insert(id.clone(), Vec::new());
+        }
+        
+        // Build connections graph (bidirectional for physics simulation)
+        for (id, instance) in &graph.node_instances {
+            for slot in &instance.slots {
+                for conn in &slot.connections {
+                    // Add bidirectional connection for force calculation
+                    self.connections
+                        .get_mut(id)
+                        .unwrap()
+                        .push(conn.target_node_id.clone());
+                    self.connections
+                        .get_mut(&conn.target_node_id)
+                        .unwrap()
+                        .push(id.clone());
+                }
+            }
+        }
+    }
+    
+    // Run a single iteration of the force simulation while a node is being dragged
+    pub fn run_simulation_step(&mut self, graph: &mut Graph) {
+        if !self.force_simulation_active || self.fixed_node_id.is_none() {
+            return;
+        }
+        
+        // Get canvas dimensions for simulation bounds
+        let canvas = window()
+            .unwrap()
+            .document()
+            .unwrap()
+            .get_element_by_id(&self.canvas_id)
+            .unwrap()
+            .dyn_into::<web_sys::HtmlCanvasElement>()
+            .unwrap();
+
+        let canvas_width = canvas.get_bounding_client_rect().width();
+        let canvas_height = canvas.get_bounding_client_rect().height();
+        
+        // Extract current positions from graph
+        let mut positions: HashMap<String, NodePosition> = HashMap::new();
+        for (id, instance) in &graph.node_instances {
+            positions.insert(
+                id.clone(),
+                NodePosition {
+                    x: instance.x,
+                    y: instance.y,
+                },
+            );
+        }
+        
+        // Parameters for interactive simulation
+        let repulsive_force = canvas_width * 15.0; // Slightly less than full sim
+        let attractive_force = 0.01; // Stronger for more responsive dragging
+        let center_gravity = 0.001; // Less gravity to allow free movement
+        let cooling_factor = 0.995; // Slower cooling to maintain responsiveness
+        
+        // Calculate forces for this iteration
+        let mut forces: HashMap<String, (f64, f64)> = HashMap::new();
+        
+        // Initialize forces to zero
+        for id in positions.keys() {
+            forces.insert(id.clone(), (0.0, 0.0));
+        }
+        
+        // Calculate repulsive forces (nodes repel each other)
+        let node_ids: Vec<String> = positions.keys().cloned().collect();
+        for i in 0..node_ids.len() {
+            for j in (i + 1)..node_ids.len() {
+                let id1 = &node_ids[i];
+                let id2 = &node_ids[j];
+                
+                let pos1 = &positions[id1];
+                let pos2 = &positions[id2];
+                
+                let dx = pos1.x - pos2.x;
+                let dy = pos1.y - pos2.y;
+                
+                // Avoid division by zero by adding a small value
+                let distance_sq = dx * dx + dy * dy + 0.01;
+                let distance = distance_sq.sqrt();
+                
+                // Repulsive force is inversely proportional to distance
+                let force = repulsive_force / distance_sq;
+                
+                // Direction from node2 to node1 normalized
+                let force_x = force * dx / distance;
+                let force_y = force * dy / distance;
+                
+                // Add force to both nodes (action = -reaction)
+                let (fx1, fy1) = forces.get(id1).unwrap();
+                forces.insert(id1.clone(), (fx1 + force_x, fy1 + force_y));
+                
+                let (fx2, fy2) = forces.get(id2).unwrap();
+                forces.insert(id2.clone(), (fx2 - force_x, fy2 - force_y));
+            }
+        }
+        
+        // Calculate attractive forces (connected nodes attract each other)
+        for (id, connected_ids) in &self.connections {
+            let pos1 = &positions[id];
+            
+            for connected_id in connected_ids {
+                let pos2 = &positions[connected_id];
+                
+                let dx = pos1.x - pos2.x;
+                let dy = pos1.y - pos2.y;
+                
+                let distance = (dx * dx + dy * dy).sqrt() + 0.01;
+                
+                // Attractive force is proportional to distance
+                let force = attractive_force * distance;
+                
+                // Direction from node1 to node2 normalized
+                let force_x = force * dx / distance;
+                let force_y = force * dy / distance;
+                
+                // Only apply to the current node (the connected node will get its own turn)
+                let (fx, fy) = forces.get(id).unwrap();
+                forces.insert(id.clone(), (fx - force_x, fy - force_y));
+            }
+        }
+        
+        // Add center gravity to pull nodes toward the center
+        let center_x = canvas_width / 2.0;
+        let center_y = canvas_height / 2.0;
+        
+        for (id, pos) in &positions {
+            let dx = pos.x - center_x;
+            let dy = pos.y - center_y;
+            
+            let distance = (dx * dx + dy * dy).sqrt() + 0.01;
+            let force = center_gravity * distance;
+            
+            let force_x = force * dx / distance;
+            let force_y = force * dy / distance;
+            
+            let (fx, fy) = forces.get(id).unwrap();
+            forces.insert(id.clone(), (fx - force_x, fy - force_y));
+        }
+        
+        // Apply forces to update positions - but skip the fixed (dragged) node
+        let fixed_node_id = self.fixed_node_id.as_ref().unwrap();
+        
+        for (id, (force_x, force_y)) in &forces {
+            // Skip the node being dragged
+            if id == fixed_node_id {
+                continue;
+            }
+            
+            // Get the node instance and update its position
+            if let Some(instance) = graph.node_instances.get_mut(id) {
+                // Limit maximum movement by temperature
+                let force_magnitude = (force_x * force_x + force_y * force_y).sqrt();
+                let scale = if force_magnitude > self.temperature {
+                    self.temperature / force_magnitude
+                } else {
+                    1.0
+                };
+                
+                // Update position - without canvas boundary constraints
+                instance.x += force_x * scale;
+                instance.y += force_y * scale;
+            }
+        }
+        
+        // Cool down system gradually
+        self.temperature *= cooling_factor;
+        self.simulation_iteration += 1;
+        
+        // Maintain a minimum temperature to keep the simulation responsive
+        if self.temperature < 1.0 {
+            self.temperature = 1.0;
+        }
+        
+        // Only stop after an extremely large number of iterations
+        if self.simulation_iteration > 10000 {
+            self.force_simulation_active = false;
+        }
+    }
+    
     pub fn generate_force_directed_layout(&self, graph: &Graph) -> LayoutSnapshot {
         let mut positions = HashMap::new();
 
@@ -695,14 +929,9 @@ impl LayoutEngine {
                     1.0
                 };
 
-                // Update position
+                // Update position - without canvas boundary constraints
                 pos.x += force_x * scale;
                 pos.y += force_y * scale;
-
-                // Keep nodes within canvas bounds with some padding
-                let padding = 50.0;
-                pos.x = pos.x.max(padding).min(canvas_width - padding);
-                pos.y = pos.y.max(padding).min(canvas_height - padding);
             }
 
             // Cool down system

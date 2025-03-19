@@ -273,21 +273,13 @@ impl GraphCanvas {
         interaction_label.set_attribute("style", "font-size: 12px; font-weight: bold;")?;
         interaction_section.append_child(&interaction_label)?;
 
-        // Pointer button
+        // Pointer button (default mode)
         let pointer_btn = document.create_element("button")?;
         pointer_btn.set_inner_html("🖱 Pointer");
         pointer_btn.set_attribute("id", "btn-pointer")?;
         pointer_btn.set_attribute("class", "toolbar-btn active")?;
         pointer_btn.set_attribute("style", "padding: 4px 8px; border: 1px solid #ccc; border-radius: 4px; background: white; cursor: pointer;")?;
         interaction_section.append_child(&pointer_btn)?;
-
-        // Pan button
-        let pan_btn = document.create_element("button")?;
-        pan_btn.set_inner_html("✋ Pan");
-        pan_btn.set_attribute("id", "btn-pan")?;
-        pan_btn.set_attribute("class", "toolbar-btn")?;
-        pan_btn.set_attribute("style", "padding: 4px 8px; border: 1px solid #ccc; border-radius: 4px; background: white; cursor: pointer;")?;
-        interaction_section.append_child(&pan_btn)?;
 
         // === FIELD EDITOR SECTION ===
 
@@ -477,11 +469,10 @@ impl GraphCanvas {
         {
             let graph_canvas_clone = graph_canvas.clone();
             let pointer_btn_clone = pointer_btn.clone();
-            let pan_btn_clone = pan_btn.clone();
             let template_group_container_clone = template_group_container.clone();
             let cancel_btn_clone = cancel_btn.clone();
 
-            // Pointer button click
+            // Pointer button click (reset to default mode)
             let pointer_click = Closure::wrap(Box::new(move |_event: web_sys::MouseEvent| {
                 // Switch to default mode
                 graph_canvas_clone.set_interaction_mode(InteractionMode::Default);
@@ -490,7 +481,6 @@ impl GraphCanvas {
                 pointer_btn_clone
                     .set_attribute("class", "toolbar-btn active")
                     .unwrap();
-                pan_btn_clone.set_attribute("class", "toolbar-btn").unwrap();
 
                 // Hide add node UI
                 template_group_container_clone
@@ -508,45 +498,10 @@ impl GraphCanvas {
             pointer_click.forget();
         }
 
-        {
-            let graph_canvas_clone = graph_canvas.clone();
-            let pointer_btn_clone = pointer_btn.clone();
-            let pan_btn_clone = pan_btn.clone();
-            let template_group_container_clone = template_group_container.clone();
-            let cancel_btn_clone = cancel_btn.clone();
-
-            // Pan button click
-            let pan_click = Closure::wrap(Box::new(move |_event: web_sys::MouseEvent| {
-                // Switch to pan mode
-                graph_canvas_clone.set_interaction_mode(InteractionMode::Pan);
-
-                // Update button styles
-                pointer_btn_clone
-                    .set_attribute("class", "toolbar-btn")
-                    .unwrap();
-                pan_btn_clone
-                    .set_attribute("class", "toolbar-btn active")
-                    .unwrap();
-
-                // Hide add node UI
-                template_group_container_clone
-                    .set_attribute("style", "display: none;")
-                    .unwrap();
-                cancel_btn_clone
-                    .set_attribute("style", "display: none;")
-                    .unwrap();
-            }) as Box<dyn FnMut(_)>);
-
-            pan_btn
-                .add_event_listener_with_callback("click", pan_click.as_ref().unchecked_ref())?;
-            pan_click.forget();
-        }
-
         // Add Node button - toggle template group container
         {
             let graph_canvas_clone = graph_canvas.clone();
             let pointer_btn_clone = pointer_btn.clone();
-            let pan_btn_clone = pan_btn.clone();
             let template_group_container_clone = template_group_container.clone();
             let cancel_btn_clone = cancel_btn.clone();
 
@@ -558,7 +513,6 @@ impl GraphCanvas {
                 pointer_btn_clone
                     .set_attribute("class", "toolbar-btn")
                     .unwrap();
-                pan_btn_clone.set_attribute("class", "toolbar-btn").unwrap();
 
                 // Show template selection UI
                 template_group_container_clone.set_attribute("style",
@@ -1084,6 +1038,26 @@ impl GraphCanvas {
                 Err(e) => log(&format!("{:?}", e.as_string())),
             }
         }) as Box<dyn FnMut(_)>);
+        
+        // Mouse Wheel Handler for zooming
+        let self_clone = self.clone();
+        let canvas_clone = canvas.clone();
+        let wheel_handler = Closure::wrap(Box::new(move |event: web_sys::WheelEvent| {
+            // Prevent default browser behavior (page scrolling)
+            event.prevent_default();
+            
+            let rect = canvas_clone.get_bounding_client_rect();
+            let x = event.client_x() as f64 - rect.left();
+            let y = event.client_y() as f64 - rect.top();
+            
+            // Get delta (negative for zoom in, positive for zoom out)
+            let delta = event.delta_y();
+            
+            match self_clone.handle_zoom(delta, x, y) {
+                Ok(_) => {},
+                Err(e) => log(&format!("Zoom error: {:?}", e.as_string())),
+            }
+        }) as Box<dyn FnMut(_)>);
 
         let canvas_clone = canvas.clone();
         // Add event listeners
@@ -1096,11 +1070,15 @@ impl GraphCanvas {
         canvas_clone
             .add_event_listener_with_callback("mouseup", mouse_up.as_ref().unchecked_ref())
             .map_err(GraphError::SetupFailed)?;
+        canvas_clone
+            .add_event_listener_with_callback("wheel", wheel_handler.as_ref().unchecked_ref())
+            .map_err(GraphError::SetupFailed)?;
 
         // Prevent memory leaks
         mouse_down.forget();
         mouse_move.forget();
         mouse_up.forget();
+        wheel_handler.forget();
 
         Ok(())
     }

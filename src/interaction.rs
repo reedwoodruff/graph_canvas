@@ -54,17 +54,27 @@ pub struct InteractionState {
 pub struct ViewTransform {
     pub pan_x: f64,
     pub pan_y: f64,
+    pub zoom: f64,
 }
 impl ViewTransform {
     // Convert screen coordinates to graph coordinates
     pub fn screen_to_graph(&self, x: f64, y: f64) -> (f64, f64) {
-        (x - self.pan_x, y - self.pan_y)
+        // First apply pan, then account for zoom
+        let center_x = x - self.pan_x;
+        let center_y = y - self.pan_y;
+        
+        // Convert from screen to graph space (divide by zoom factor)
+        (center_x / self.zoom, center_y / self.zoom)
     }
 
     #[allow(dead_code)]
     // Convert graph coordinates to screen coordinates
     pub fn graph_to_screen(&self, x: f64, y: f64) -> (f64, f64) {
-        (x + self.pan_x, y + self.pan_y)
+        // First apply zoom, then add pan
+        let zoomed_x = x * self.zoom;
+        let zoomed_y = y * self.zoom;
+        
+        (zoomed_x + self.pan_x, zoomed_y + self.pan_y)
     }
 }
 impl InteractionState {
@@ -84,6 +94,7 @@ impl InteractionState {
             view_transform: ViewTransform {
                 pan_x: 0.0,
                 pan_y: 0.0,
+                zoom: 1.0,
             },
             hovered_node: None,
             hovered_slot: None,
@@ -93,7 +104,6 @@ impl InteractionState {
 }
 pub enum InteractionMode {
     Default,
-    Pan,
     AddNode,
 }
 
@@ -233,9 +243,6 @@ impl GraphCanvas {
             InteractionMode::Default => self
                 .internal_pointer_handle_mouse_down(graph_x, graph_y, &mut graph, &mut ix, &events)
                 .map_err(log_and_convert_error)?,
-            InteractionMode::Pan => self
-                .internal_pan_handle_mouse_down(graph_x, graph_y, &mut graph, &mut ix, &events)
-                .map_err(log_and_convert_error)?,
             InteractionMode::AddNode => self
                 .internal_add_node_handle_mouse_down(graph_x, graph_y, &mut graph, &mut ix, &events)
                 .map_err(log_and_convert_error)?,
@@ -262,11 +269,6 @@ impl GraphCanvas {
                     graph_x, graph_y, dx, dy, &mut graph, &mut ix, &events,
                 )
                 .map_err(log_and_convert_error)?,
-            InteractionMode::Pan => self
-                .internal_pan_handle_mouse_move(
-                    graph_x, graph_y, dx, dy, &mut graph, &mut ix, &events,
-                )
-                .map_err(log_and_convert_error)?,
             InteractionMode::AddNode => self
                 .internal_add_node_handle_mouse_move(
                     graph_x, graph_y, dx, dy, &mut graph, &mut ix, &events,
@@ -285,9 +287,6 @@ impl GraphCanvas {
         match ix.mode {
             InteractionMode::Default => self
                 .internal_pointer_handle_mouse_up(graph_x, graph_y, &mut graph, &mut ix, &events)
-                .map_err(log_and_convert_error)?,
-            InteractionMode::Pan => self
-                .internal_pan_handle_mouse_up(graph_x, graph_y, &mut graph, &mut ix, &events)
                 .map_err(log_and_convert_error)?,
             InteractionMode::AddNode => self
                 .internal_add_node_handle_mouse_up(graph_x, graph_y, &mut graph, &mut ix, &events)
@@ -487,6 +486,37 @@ impl GraphCanvas {
             .unwrap()
             .actively_creating_node_template_id = template_id.to_string();
     }
+    
+    /// Handle zooming - called when the mousewheel is used
+    pub(crate) fn handle_zoom(&self, delta: f64, screen_x: f64, screen_y: f64) -> Result<(), JsValue> {
+        let mut ix = self.interaction.lock().map_err(log_and_convert_error)?;
+        
+        // Calculate zoom factor change based on wheel delta
+        let zoom_speed = 0.1; // Adjust for faster/slower zooming
+        let zoom_delta = if delta < 0.0 { 1.0 + zoom_speed } else { 1.0 - zoom_speed };
+        
+        // Calculate new zoom level with min/max constraints
+        let new_zoom = (ix.view_transform.zoom * zoom_delta).max(0.1).min(5.0);
+        
+        // Get the point under the cursor in graph coordinates before zoom
+        let (graph_x, graph_y) = ix.view_transform.screen_to_graph(screen_x, screen_y);
+        
+        // Update zoom
+        ix.view_transform.zoom = new_zoom;
+        
+        // Get the new screen position of the same graph point after zoom
+        let (new_screen_x, new_screen_y) = ix.view_transform.graph_to_screen(graph_x, graph_y);
+        
+        // Calculate the offset to keep the point under the cursor
+        let dx = screen_x - new_screen_x;
+        let dy = screen_y - new_screen_y;
+        
+        // Adjust pan to keep the point under the cursor
+        ix.view_transform.pan_x += dx;
+        ix.view_transform.pan_y += dy;
+        
+        Ok(())
+    }
     fn internal_pointer_handle_mouse_down(
         &self,
         x: f64,
@@ -529,6 +559,12 @@ impl GraphCanvas {
                 return Ok(());
             }
         }
+        
+        // If we didn't click on any slot or node, start panning
+        if self.config.is_movable {
+            ix.is_panning = true;
+        }
+        
         ix.click_initiated_on_node = None;
         ix.click_initiated_on_slot = None;
         ix.currently_selected_node_instance = None;
@@ -592,8 +628,8 @@ impl GraphCanvas {
         &self,
         x: f64,
         y: f64,
-        _dx: f64,
-        _dy: f64,
+        dx: f64,
+        dy: f64,
         graph: &mut Graph,
         ix: &mut InteractionState,
         events: &EventSystem,
@@ -610,6 +646,12 @@ impl GraphCanvas {
                 events.emit(SystemEvent::ContextMenuClosed);
             }
             ix.is_dragging_node = true;
+            
+            // Start force simulation if the layout type is force directed
+            if let Ok(mut layout_engine) = self.layout_engine.try_lock() {
+                let node_id = ix.click_initiated_on_node.clone().unwrap();
+                layout_engine.start_force_simulation(graph, &node_id);
+            }
         }
         if ix.is_mouse_down && ix.click_initiated_on_slot.is_some() && ix.connection_drag.is_none()
         {
@@ -647,8 +689,18 @@ impl GraphCanvas {
                 if let Some(instance) = graph.node_instances.get_mut(selected_id) {
                     instance.x = x - instance.radius;
                     instance.y = y - instance.radius;
+                    
+                    // Run a simulation step when in force directed mode
+                    if let Ok(mut layout_engine) = self.layout_engine.try_lock() {
+                        layout_engine.run_simulation_step(graph);
+                    }
                 }
             }
+        }
+        // Handle panning if enabled
+        else if ix.is_panning {
+            ix.view_transform.pan_x += dx;
+            ix.view_transform.pan_y += dy;
         }
 
         Ok(())
@@ -862,7 +914,15 @@ impl GraphCanvas {
                 }
             }
         }
+        // If we were dragging a node, stop any active simulation
+        if ix.is_dragging_node {
+            if let Ok(mut layout_engine) = self.layout_engine.try_lock() {
+                layout_engine.stop_force_simulation();
+            }
+        }
+        
         ix.is_dragging_node = false;
+        ix.is_panning = false;
 
         if ix.context_menu.is_some() {
             ix.context_menu = None;
@@ -871,50 +931,7 @@ impl GraphCanvas {
 
         Ok(())
     }
-    fn internal_pan_handle_mouse_down(
-        &self,
-        x: f64,
-        y: f64,
-        graph: &mut Graph,
-        ix: &mut InteractionState,
-        events: &EventSystem,
-    ) -> GraphResult<()> {
-        if !self.config.is_movable {
-            return Ok(());
-        }
-        ix.is_panning = true;
-        Ok(())
-    }
-    fn internal_pan_handle_mouse_move(
-        &self,
-        x: f64,
-        y: f64,
-        dx: f64,
-        dy: f64,
-        graph: &mut Graph,
-        ix: &mut InteractionState,
-        events: &EventSystem,
-    ) -> GraphResult<()> {
-        if ix.is_panning {
-            ix.view_transform.pan_x += dx;
-            ix.view_transform.pan_y += dy;
-        }
-        Ok(())
-    }
-    fn internal_pan_handle_mouse_up(
-        &self,
-        x: f64,
-        y: f64,
-        graph: &mut Graph,
-        ix: &mut InteractionState,
-        events: &EventSystem,
-    ) -> GraphResult<()> {
-        if !self.config.is_movable {
-            return Ok(());
-        }
-        ix.is_panning = false;
-        Ok(())
-    }
+    // Pan mode has been removed and integrated into Default mode
     fn internal_add_node_handle_mouse_down(
         &self,
         x: f64,
