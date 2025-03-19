@@ -590,12 +590,12 @@ impl LayoutEngine {
         }
 
         // Force-directed layout parameters
-        let iterations = 400;
+        let iterations = 300;
         let mut temperature = canvas_width * 0.8; // Initial "temperature" controls movement scale
         let cooling_factor = 0.99; // How quickly the system "cools down"
         let repulsive_force = canvas_width * 20.0; // Strength of repulsion between all nodes
         let attractive_force = 0.005; // Strength of attraction along edges
-        let center_gravity = 0.01; // Force pulling nodes toward the center
+        let center_gravity = 0.003; // Force pulling nodes toward the center
 
         // Run simulation for a fixed number of iterations
         for _ in 0..iterations {
