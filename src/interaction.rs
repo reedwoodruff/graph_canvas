@@ -575,6 +575,7 @@ impl GraphCanvas {
         }
 
         // If context menu is open and the click was within the menu
+        // Handle calling the action if it was clicked
         if let Some(menu) = &ix.context_menu {
             if x >= menu.x
                 && x <= menu.x + self.config.context_menu_size.0
@@ -603,9 +604,21 @@ impl GraphCanvas {
                 // If it was not on a menu-item, do nothing
                 return Ok(());
             }
+            return Ok(());
         }
 
-        // If we didn't click on any slot or node, start panning
+        // Check to see if the click was on a connection
+        for (instance_id, instance) in graph.node_instances.iter() {
+            for slot in &instance.slots {
+                for connection in &slot.connections {
+                    if self.is_point_on_connection(graph, connection, x, y)? {
+                        return Ok(());
+                    }
+                }
+            }
+        }
+
+        // If we didn't click on any slot, menu, connection, or node, start panning
         if self.config.is_movable {
             ix.is_panning = true;
         }
