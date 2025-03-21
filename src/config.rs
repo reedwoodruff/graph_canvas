@@ -1,7 +1,7 @@
 use derivative::Derivative;
 
-use crate::graph::{Graph, NodeTemplate};
-use std::collections::{BTreeMap, HashMap, HashSet};
+use crate::graph::NodeTemplate;
+use std::collections::HashSet;
 
 #[derive(Clone, Debug)]
 pub struct TemplateGroup {

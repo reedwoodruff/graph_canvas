@@ -600,11 +600,9 @@ impl GraphCanvas {
                         }
                     }
                 }
-
-                // If it was not on a menu-item, do nothing
+                // If it was not on a menu-item but is in a menu, do nothing
                 return Ok(());
             }
-            return Ok(());
         }
 
         // Check to see if the click was on a connection

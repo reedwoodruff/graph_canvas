@@ -101,8 +101,7 @@ impl LayoutEngine {
         let needs_layout = self.views[self.current_view_index]
             .snapshot
             .positions
-            .is_empty()
-            || layout_type == LayoutType::ForceDirected;
+            .is_empty();
 
         let snapshot = if needs_layout {
             let new_snapshot = match layout_type {
@@ -149,16 +148,6 @@ impl LayoutEngine {
         ix.view_transform.pan_x = current_view.pan_x;
         ix.view_transform.pan_y = current_view.pan_y;
         ix.view_transform.zoom = current_view.zoom;
-    }
-
-    // Get current view index
-    pub fn get_current_view_index(&self) -> usize {
-        self.current_view_index
-    }
-
-    // Get layout type of current view
-    pub fn get_current_layout_type(&self) -> LayoutType {
-        self.views[self.current_view_index].layout_type.clone()
     }
 
     // Check if physics is enabled for the current view
@@ -309,7 +298,7 @@ impl LayoutEngine {
         let mut max_y = f64::MIN;
 
         for (level, x_positions) in &nodes_by_level {
-            for (idx, node_id) in x_positions.iter().enumerate() {
+            for (idx, _node_id) in x_positions.iter().enumerate() {
                 let x = *level as f64;
                 let y = idx as f64;
 
@@ -1062,26 +1051,4 @@ impl LayoutEngine {
 
         LayoutSnapshot { positions }
     }
-}
-
-fn count_crossings(
-    level: &[String],
-    previous_level: &[String],
-    dependencies: &HashMap<String, Vec<String>>,
-) -> usize {
-    let mut crossings = 0;
-
-    for (i1, n1) in level.iter().enumerate() {
-        for (_i2, n2) in level.iter().enumerate().skip(i1 + 1) {
-            for (j1, p1) in previous_level.iter().enumerate() {
-                for (_j2, p2) in previous_level.iter().enumerate().skip(j1 + 1) {
-                    if dependencies[n1].contains(p2) && dependencies[n2].contains(p1) {
-                        crossings += 1;
-                    }
-                }
-            }
-        }
-    }
-
-    crossings
 }
