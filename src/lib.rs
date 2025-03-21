@@ -3,7 +3,7 @@ use errors::IntoJsError;
 use errors::{GraphError, GraphResult};
 use interaction::{InteractionMode, InteractionState};
 use layout::LayoutEngine;
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::sync::{Arc, Mutex};
 use wasm_bindgen::{prelude::*, JsCast};
 use web_sys::{window, HtmlCanvasElement, HtmlDivElement};
@@ -19,6 +19,7 @@ mod interaction;
 mod js;
 mod layout;
 pub mod prelude;
+mod toolbar_ui;
 
 pub use config::GraphCanvasConfig;
 pub use config::InitialConnection;
@@ -327,7 +328,7 @@ impl GraphCanvas {
         // Organize templates into groups
         let template_groups = if config.template_groups.is_empty() {
             // If no groups are defined, create a default group with all templates
-            let mut groups = HashMap::new();
+            let mut groups = Vec::new();
             let creatable_templates = config
                 .node_templates
                 .iter()
@@ -335,7 +336,7 @@ impl GraphCanvas {
                 .collect::<Vec<_>>();
 
             if !creatable_templates.is_empty() {
-                groups.insert("All Templates".to_string(), creatable_templates);
+                groups.push(("All Templates".to_string(), creatable_templates));
             }
             groups
         } else {
@@ -392,7 +393,7 @@ impl GraphCanvas {
             content_container.set_attribute(
                 "style",
                 &format!(
-                    "display: {}; flex-direction: column; gap: 4px;",
+                    "display: {}; flex-direction: column; gap: 2px;",
                     if i == 0 { "flex" } else { "none" }
                 ),
             )?;
@@ -404,7 +405,7 @@ impl GraphCanvas {
                 template_button.set_attribute("data-template-name", &template.name)?;
                 template_button.set_attribute("data-template-id", &template.template_id)?;
                 template_button.set_attribute("class", "template-button")?;
-                template_button.set_attribute("style", "padding: 6px 10px; border: 1px solid #ddd; border-radius: 4px; text-align: left; background: white; cursor: pointer; margin: 2px 0;")?;
+                template_button.set_attribute("style", "padding: 2px 10px; border: 1px solid #ddd; border-radius: 4px; text-align: left; background: white; cursor: pointer; margin: 2px 0;")?;
                 content_container.append_child(&template_button)?;
 
                 // Remember the first template name for default selection
@@ -699,17 +700,45 @@ impl GraphCanvas {
 
         // Template button click handlers
         let template_buttons = template_group_container.query_selector_all(".template-button")?;
-        for i in 0..template_buttons.length() {
+        let template_buttons_length = template_buttons.length();
+        for i in 0..template_buttons_length {
+            let template_buttons_length_clone = template_buttons.length();
+            let template_buttons_clone =
+                template_group_container.query_selector_all(".template-button")?;
             let template_button = template_buttons
                 .get(i)
                 .unwrap()
-                .dyn_into::<web_sys::HtmlElement>()?;
+                .dyn_into::<web_sys::HtmlElement>()?
+                .clone();
             let template_button_clone = template_button.clone();
             let graph_canvas_clone = graph_canvas.clone();
 
             let template_click = Closure::wrap(Box::new(move |_event: web_sys::MouseEvent| {
+                for i in 0..template_buttons_length_clone {
+                    let button = template_buttons_clone
+                        .get(i)
+                        .unwrap()
+                        .dyn_into::<web_sys::HtmlElement>()
+                        .unwrap();
+                    button
+                        .style()
+                        .set_property("background-color", "white")
+                        .unwrap();
+                    button
+                        .style()
+                        .set_property("border", "1px solid #ddd")
+                        .unwrap();
+                }
                 let template_id = template_button_clone
                     .get_attribute("data-template-id")
+                    .unwrap();
+                template_button_clone
+                    .style()
+                    .set_property("background-color", "lightgoldenrodyellow")
+                    .unwrap();
+                template_button_clone
+                    .style()
+                    .set_property("border", "1px solid black")
                     .unwrap();
 
                 // Set the selected template

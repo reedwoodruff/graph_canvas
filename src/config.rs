@@ -1,7 +1,7 @@
 use derivative::Derivative;
 
 use crate::graph::{Graph, NodeTemplate};
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 
 #[derive(Clone, Debug)]
 pub struct TemplateGroup {
@@ -85,26 +85,30 @@ impl GraphCanvasConfig {
         Vec::new()
     }
 
-    pub fn get_template_group_map(&self) -> HashMap<String, Vec<&NodeTemplate>> {
-        let mut result = HashMap::new();
+    pub fn get_template_group_map(&self) -> Vec<(String, Vec<&NodeTemplate>)> {
+        let mut result = Vec::new();
 
         // Create a "default" group for unassigned templates
         let mut assigned_template_ids = HashSet::new();
 
         // First, populate all explicitly defined groups
         for group in &self.template_groups {
-            let templates = self
-                .node_templates
-                .iter()
-                .filter(|template| group.templates.contains(&template.name))
-                .collect::<Vec<_>>();
+            let templates = group.templates.iter().map(|template_name| {
+                self.node_templates
+                    .iter()
+                    .find(|t| t.name == *template_name)
+                    .expect(&format!(
+                        "Configuration incorrect. Template not found: {}. Template group which holds unfound template: {}",
+                        template_name, group.name
+                    ))
+            }).collect::<Vec<_>>();
 
             for template in &templates {
                 assigned_template_ids.insert(template.template_id.clone());
             }
 
             if !templates.is_empty() {
-                result.insert(group.id.clone(), templates);
+                result.push((group.id.clone(), templates));
             }
         }
 
@@ -118,7 +122,7 @@ impl GraphCanvasConfig {
             .collect::<Vec<_>>();
 
         if !other_templates.is_empty() {
-            result.insert("other".to_string(), other_templates);
+            result.push(("other".to_string(), other_templates));
         }
 
         result
